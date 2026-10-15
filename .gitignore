@@ -1,0 +1,21 @@
+# Dependencias
+node_modules/
+
+# Compilado (npm run build)
+dist/
+*.tsbuildinfo
+
+# Variables de entorno: tienen credenciales, nunca al repo (.env.example sí se sube)
+.env
+.env*.local
+
+# Claude y documentación
+.claude/
+docs/
+
+# Logs
+npm-debug.log*
+*.log
+
+# Sistema
+.DS_Store

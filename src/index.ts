@@ -1,0 +1,95 @@
+import 'dotenv/config';
+import express, { NextFunction, Request, Response } from 'express';
+import cors from 'cors';
+import helmet from 'helmet';
+import mongoose from 'mongoose';
+import multer from 'multer';
+import { conectarDB } from './config/db';
+import { mensajeDeMulter } from './middleware/upload';
+import authRoutes from './routes/auth';
+import catalogoRoutes from './routes/catalogo';
+import clientesRoutes from './routes/clientes';
+import pedidosRoutes from './routes/pedidos';
+import productosRoutes from './routes/productos';
+import promosRoutes from './routes/promos';
+import { ErrorHttp } from './utils/errores';
+
+const app = express();
+
+// Render (y otros hosts) usan un proxy delante de la app
+app.set('trust proxy', 1);
+
+app.use(helmet());
+
+const origenesPermitidos = (process.env.CORS_ORIGINS ?? '')
+  .split(',')
+  .map((o) => o.trim())
+  .filter(Boolean);
+
+app.use(
+  cors({
+    origin: (origin, cb) => {
+      // Sin "origin" = app móvil (APK) o herramientas como curl: se permite
+      if (!origin || origenesPermitidos.includes(origin)) return cb(null, true);
+      cb(new ErrorHttp(403, 'Origen no permitido por CORS'));
+    },
+  })
+);
+
+// Va antes del express.json() global: trae su propio parser con límite de 10kb para la ruta pública
+app.use('/api/pedidos', pedidosRoutes);
+
+app.use(express.json());
+
+// Endpoint liviano para el ping que mantiene despierto el backend en Render
+app.get('/health', (_req, res) => res.send('ok'));
+
+app.use('/api/auth', authRoutes);
+app.use('/api/catalogo', catalogoRoutes);
+app.use('/api/productos', productosRoutes);
+app.use('/api/promos', promosRoutes);
+app.use('/api/clientes', clientesRoutes);
+
+// Manejo de errores (incluye errores de multer, de Cloudinary, de Mongoose y del parser de JSON)
+app.use((err: Error & { status?: number; type?: string }, _req: Request, res: Response, _next: NextFunction) => {
+  // Errores esperados que tiran los servicios: no son fallas del servidor, no se loguean
+  if (err instanceof ErrorHttp) {
+    return res.status(err.status).json({ error: err.message });
+  }
+  // Errores del parser de JSON (body roto o demasiado grande): no se loguean porque traen el body crudo,
+  // y ahí viajan nombres y teléfonos de clientes
+  if (err.type && err.status && err.status < 500) {
+    const mensaje =
+      err.status === 413 ? 'El cuerpo de la petición es demasiado grande' : 'El cuerpo de la petición no es un JSON válido';
+    return res.status(err.status).json({ error: mensaje });
+  }
+  // Datos que no cumplen el esquema (precio negativo, número inválido) o imagen rechazada por Multer
+  // (más de 5 MB): son errores de la petición, no del servidor
+  if (err instanceof mongoose.Error.ValidationError || err instanceof mongoose.Error.CastError) {
+    return res.status(400).json({ error: err.message });
+  }
+  if (err instanceof multer.MulterError) {
+    return res.status(400).json({ error: mensajeDeMulter(err) });
+  }
+  // Cualquier otra cosa es una falla del servidor (la base no responde, Cloudinary rechazó la subida…).
+  // Se loguea entera, pero al cliente le llega un mensaje genérico: el técnico puede traer datos internos
+  console.error(err);
+  res.status(500).json({ error: 'Algo falló en el servidor. Probá de nuevo en unos minutos.' });
+});
+
+// Express 5 pasa los errores de las rutas async al manejador de arriba; esto es una red de seguridad
+process.on('unhandledRejection', (e) => console.error('unhandledRejection', e));
+
+const puerto = Number(process.env.PORT) || 3000;
+
+if (!process.env.JWT_SECRET) {
+  console.error('Falta JWT_SECRET en el .env');
+  process.exit(1);
+}
+
+conectarDB()
+  .then(() => app.listen(puerto, () => console.log(`API escuchando en el puerto ${puerto}`)))
+  .catch((e) => {
+    console.error('No se pudo conectar a MongoDB:', e.message);
+    process.exit(1);
+  });
