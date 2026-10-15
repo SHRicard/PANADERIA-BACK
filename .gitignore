@@ -11,6 +11,7 @@ dist/
 
 # Claude y documentación
 .claude/
+docs/
 
 # Logs
 npm-debug.log*
