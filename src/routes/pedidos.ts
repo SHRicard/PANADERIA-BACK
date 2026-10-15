@@ -5,6 +5,7 @@ import { requiereAdmin } from '../middleware/auth';
 import { Cliente, ICliente } from '../models/Cliente';
 import { ESTADOS_PEDIDO, EstadoPedido, IItemPedido, Pedido } from '../models/Pedido';
 import { Producto } from '../models/Producto';
+import { leerPaginado } from '../utils/paginado';
 import { normalizarTelefono } from '../utils/telefono';
 
 // POST / es PÚBLICA (la web, sin login). Las demás son PRIVADAS: requiereAdmin ruta por ruta
@@ -27,11 +28,6 @@ function esObjeto(valor: unknown): valor is Record<string, unknown> {
 
 function esEstado(valor: unknown): valor is EstadoPedido {
   return typeof valor === 'string' && (ESTADOS_PEDIDO as readonly string[]).includes(valor);
-}
-
-function enteroPositivo(valor: unknown): number | undefined {
-  const n = typeof valor === 'string' ? Number(valor) : NaN;
-  return Number.isInteger(n) && n >= 1 ? n : undefined;
 }
 
 // POST /api/pedidos  { cliente: { nombre, telefono }, items: [{ productoId, cantidad }], nota? }
@@ -81,7 +77,7 @@ router.post('/', limitarPedidos, leerJson, async (req, res) => {
   }
 
   const ids = [...cantidades.keys()];
-  const productos = await Producto.find({ _id: { $in: ids }, disponible: true }).select('nombre precio');
+  const productos = await Producto.find({ _id: { $in: ids }, disponible: true }).select('nombre precio categoria');
   const porId = new Map(productos.map((p) => [p.id as string, p]));
 
   const noDisponibles = ids.filter((id) => !porId.has(id));
@@ -92,11 +88,14 @@ router.post('/', limitarPedidos, leerJson, async (req, res) => {
     });
   }
 
-  // Nombre, precio y total salen de la base: nunca se confía en lo que manda el cliente
+  // Nombre, precio, categoría y total salen de la base: nunca se confía en lo que manda el cliente
   const items: IItemPedido[] = [];
   for (const [id, cantidad] of cantidades) {
     const producto = porId.get(id);
-    if (producto) items.push({ producto: producto._id, nombre: producto.nombre, precio: producto.precio, cantidad });
+    if (producto) {
+      const { nombre, precio, categoria } = producto;
+      items.push({ producto: producto._id, nombre, precio, categoria, cantidad });
+    }
   }
   const total = Math.round(items.reduce((suma, i) => suma + i.precio * i.cantidad, 0) * 100) / 100;
 
@@ -136,8 +135,7 @@ router.get('/', requiereAdmin, async (req, res) => {
     filtro.estado = req.query.estado;
   }
 
-  const pagina = enteroPositivo(req.query.pagina) ?? 1;
-  const limite = Math.min(enteroPositivo(req.query.limite) ?? 20, 100);
+  const { pagina, limite } = leerPaginado(req.query);
 
   const [pedidos, totalPedidos] = await Promise.all([
     Pedido.find(filtro)

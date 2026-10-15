@@ -8,7 +8,8 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "crear-admin": "tsx src/scripts/crearAdmin.ts"
+    "crear-admin": "tsx src/scripts/crearAdmin.ts",
+    "subir-marca": "tsx src/scripts/subirMarca.ts"
   },
   "keywords": [],
   "author": "",

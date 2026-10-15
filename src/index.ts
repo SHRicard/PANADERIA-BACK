@@ -4,6 +4,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import mongoose from 'mongoose';
 import multer from 'multer';
+import { comprobarMarca, problemasDeConfiguracion } from './config/cloudinary';
 import { conectarDB } from './config/db';
 import { mensajeDeMulter } from './middleware/upload';
 import authRoutes from './routes/auth';
@@ -87,8 +88,19 @@ if (!process.env.JWT_SECRET) {
   process.exit(1);
 }
 
+// Sin Cloudinary no se pueden subir fotos: se corta acá y no en la primera subida
+const problemasCloudinary = problemasDeConfiguracion();
+if (problemasCloudinary.length) {
+  problemasCloudinary.forEach((problema) => console.error(problema));
+  process.exit(1);
+}
+
 conectarDB()
-  .then(() => app.listen(puerto, () => console.log(`API escuchando en el puerto ${puerto}`)))
+  .then(() => {
+    app.listen(puerto, () => console.log(`API escuchando en el puerto ${puerto}`));
+    // No se espera: en Render cada segundo de arranque cuenta, y si falta el logo solo avisa
+    comprobarMarca();
+  })
   .catch((e) => {
     console.error('No se pudo conectar a MongoDB:', e.message);
     process.exit(1);

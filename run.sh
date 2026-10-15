@@ -123,14 +123,14 @@ async function main() {
     else error(`Falta ${nombre} (${para})`);
   }
 
-  // Sin Cloudinary la API anda igual, solo no se pueden subir fotos; a medio cargar es un error
+  // Sin Cloudinary la API no arranca (lo exige index.ts)
   const variablesCloudinary = ['CLOUDINARY_CLOUD_NAME', 'CLOUDINARY_API_KEY', 'CLOUDINARY_API_SECRET'];
   const faltanCloudinary = variablesCloudinary.filter((nombre) => !env(nombre));
   const hayCloudinary = faltanCloudinary.length === 0;
   if (hayCloudinary) ok('CLOUDINARY_* (las 3)');
-  else if (faltanCloudinary.length === variablesCloudinary.length)
-    aviso('Cloudinary sin configurar: la API anda, pero no se van a poder subir fotos de productos ni promos');
-  else error(`Cloudinary a medio configurar, falta: ${faltanCloudinary.join(', ')}`);
+  else error(`Falta ${faltanCloudinary.join(', ')} (fotos de productos y promos)`);
+  if (env('CLOUDINARY_WATERMARK_ID')) ok('CLOUDINARY_WATERMARK_ID (marca de agua)');
+  else aviso('CLOUDINARY_WATERMARK_ID está vacía: las fotos se van a subir sin marca de agua');
 
   // Sin SMTP la API anda igual, solo no se puede recuperar la contraseña por email
   const variablesSmtp = ['SMTP_HOST', 'SMTP_USER', 'SMTP_PASS'];
@@ -192,6 +192,17 @@ async function main() {
     try {
       await cloudinary.api.ping({ timeout: 10000 });
       ok('Cloudinary acepta las credenciales');
+      const idMarca = env('CLOUDINARY_WATERMARK_ID');
+      if (idMarca) {
+        try {
+          await cloudinary.api.resource(idMarca, { timeout: 10000 });
+          ok('El logo de la marca está en Cloudinary');
+        } catch (e) {
+          // Sin el logo, Cloudinary rechaza las fotos con marca
+          if ((e?.error ?? e)?.http_code === 404) aviso('El logo de la marca no está en Cloudinary: corré "npm run subir-marca" (hasta entonces no se pueden subir fotos)');
+          else aviso(`No se pudo comprobar el logo de la marca: ${explicarCloudinary(e)}`);
+        }
+      }
     } catch (e) {
       error(`Cloudinary: ${explicarCloudinary(e)}`);
     }
