@@ -7,6 +7,7 @@ import { borrarDeCloudinary, enviarACloudinary, subirImagen } from '../middlewar
 const router = Router();
 
 // GET /api/promos  (pública: la app del jefe la usa para listar y compartir en WhatsApp)
+// Cada promo sale con imagenUrl optimizada y miniatura (ver el toJSON del modelo)
 router.get('/', async (_req, res) => {
   const promos = await Promo.find().select('-imagenPublicId').sort({ createdAt: -1 });
   res.json(promos);
@@ -20,8 +21,14 @@ router.post('/', requiereAdmin, subirImagen, async (req, res) => {
   }
 
   const { url, publicId } = await enviarACloudinary(req.file.buffer, 'promos');
-  const promo = await Promo.create({ titulo, texto, imagenUrl: url, imagenPublicId: publicId });
-  res.status(201).json(promo);
+  try {
+    const promo = await Promo.create({ titulo, texto, imagenUrl: url, imagenPublicId: publicId });
+    res.status(201).json(promo);
+  } catch (e) {
+    // Si no se pudo guardar, la foto recién subida quedaría huérfana
+    await borrarDeCloudinary(publicId);
+    throw e;
+  }
 });
 
 // DELETE /api/promos/:id

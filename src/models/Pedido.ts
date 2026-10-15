@@ -7,6 +7,8 @@ export interface IItemPedido {
   producto: Types.ObjectId;
   nombre: string;
   precio: number;
+  /** El gusto del producto (su categoría) al momento del pedido */
+  categoria: string;
   cantidad: number;
 }
 
@@ -22,12 +24,14 @@ export interface IPedido {
   updatedAt: Date;
 }
 
-// nombre y precio son una copia del momento del pedido: el historial no cambia si el producto se edita o se borra
+// nombre, precio y categoría son una copia del momento del pedido: el historial (y las métricas por gusto)
+// no cambian si el producto se edita o se borra. La categoría va sin enum: si la lista cambia, lo viejo sigue valiendo
 const itemSchema = new Schema<IItemPedido>(
   {
     producto: { type: Schema.Types.ObjectId, ref: 'Producto', required: true },
     nombre: { type: String, required: true, trim: true },
     precio: { type: Number, required: true, min: 0 },
+    categoria: { type: String, required: true },
     cantidad: { type: Number, required: true, min: 1, max: 50 },
   },
   { _id: false }
