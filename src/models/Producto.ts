@@ -23,22 +23,54 @@ export function buscarCategoria(valor: unknown): Categoria | undefined {
   return CATEGORIAS.find((categoria) => sinAcentos(categoria) === buscada);
 }
 
+// Corta a propósito: va como cinta sobre la tarjeta del producto
+export const MAX_ETIQUETA = 30;
+
+// Cuántas horas antes hay que encargarlo. Es informativa: se muestra en el catálogo, el pedido no la controla
+export const MAX_ANTICIPACION_HORAS = 720; // 30 días
+export const ANTICIPACION_INVALIDA = `La anticipación tiene que ser una cantidad entera de horas, de 0 a ${MAX_ANTICIPACION_HORAS}`;
+
 export interface IImagen {
   url: string;
   publicId: string;
 }
 
+// La recomendación la deja cualquiera desde la web, sin login: el producto guarda solo las últimas
+// (las más viejas se descartan), así un abuso no lo hace crecer sin límite
+export const MAX_RECOMENDACIONES_PRODUCTO = 50;
+export const PUNTAJE_MAXIMO = 5;
+export const MAX_TEXTO_RECOMENDACION = 300;
+export const LARGO_AUTOR = { min: 2, max: 60 };
+
+export interface IRecomendacion {
+  /** Estrellas, de 1 a PUNTAJE_MAXIMO */
+  puntaje: number;
+  texto?: string;
+  /** El nombre que dejó quien la escribió (no es un cliente: no hay teléfono) */
+  autor?: string;
+  createdAt: Date;
+}
+
 export interface IProducto {
   nombre: string;
   descripcion?: string;
+  /** Texto libre que elige el dueño para destacarlo en el catálogo: "Nuevo", "Promo lanzamiento"… */
+  etiqueta?: string;
   ingredientes: string[];
   pesoGramos?: number;
   precio: number;
   categoria: Categoria;
+  /** Cuántas horas antes hay que encargarlo; 0 = se puede pedir en el momento. Informativa: el pedido no la controla */
+  anticipacionHoras: number;
   /** false = pausado (por ejemplo, el pan dulce fuera de temporada): no sale en el catálogo ni se puede pedir */
   disponible: boolean;
   /** La primera es la portada */
   imagenes: IImagen[];
+  /** Las más nuevas primero, hasta MAX_RECOMENDACIONES_PRODUCTO */
+  recomendaciones: IRecomendacion[];
+  /** Promedio de las recomendaciones guardadas, con un decimal; null si no tiene */
+  puntajePromedio: number | null;
+  cantidadRecomendaciones: number;
 }
 
 // Un precio o un peso en 0 o negativo es un error de carga
@@ -63,10 +95,43 @@ const imagenSchema = new Schema<IImagen>(
   }
 );
 
+// Los mismos límites que valida catalogoController: una recomendación guardada que no los cumpla
+// trabaría la edición del producto (al guardarlo se valida entero)
+const recomendacionSchema = new Schema<IRecomendacion>(
+  {
+    puntaje: {
+      type: Number,
+      required: true,
+      min: 1,
+      max: PUNTAJE_MAXIMO,
+      validate: { validator: Number.isInteger, message: 'El puntaje tiene que ser un número entero' },
+    },
+    texto: { type: String, trim: true, maxlength: MAX_TEXTO_RECOMENDACION },
+    autor: { type: String, trim: true, minlength: LARGO_AUTOR.min, maxlength: LARGO_AUTOR.max },
+    createdAt: { type: Date, default: Date.now },
+  },
+  {
+    toJSON: {
+      transform: (_doc, recomendacion) => ({
+        id: String(recomendacion._id),
+        puntaje: recomendacion.puntaje,
+        texto: recomendacion.texto,
+        autor: recomendacion.autor,
+        createdAt: recomendacion.createdAt,
+      }),
+    },
+  }
+);
+
 const productoSchema = new Schema<IProducto>(
   {
     nombre: { type: String, required: true, trim: true },
     descripcion: { type: String, trim: true },
+    etiqueta: {
+      type: String,
+      trim: true,
+      maxlength: [MAX_ETIQUETA, `La etiqueta puede tener hasta ${MAX_ETIQUETA} caracteres`],
+    },
     ingredientes: { type: [String], default: [] },
     pesoGramos: { type: Number, validate: mayorQueCero },
     precio: { type: Number, required: true, validate: mayorQueCero },
@@ -74,6 +139,14 @@ const productoSchema = new Schema<IProducto>(
       type: String,
       required: [true, 'La categoría es obligatoria'],
       enum: { values: CATEGORIAS, message: CATEGORIA_INVALIDA },
+    },
+    // Sin valor por defecto: la elige el dueño al crearlo. Los cargados antes se completaron con npm run migrar-anticipacion
+    anticipacionHoras: {
+      type: Number,
+      required: [true, 'La anticipación es obligatoria'],
+      min: [0, ANTICIPACION_INVALIDA],
+      max: [MAX_ANTICIPACION_HORAS, ANTICIPACION_INVALIDA],
+      validate: { validator: Number.isInteger, message: ANTICIPACION_INVALIDA },
     },
     disponible: { type: Boolean, default: true },
     imagenes: {
@@ -84,6 +157,11 @@ const productoSchema = new Schema<IProducto>(
         message: `Un producto puede tener hasta ${MAX_IMAGENES_PRODUCTO} fotos`,
       },
     },
+    recomendaciones: { type: [recomendacionSchema], default: [] },
+    // Se guardan (y no se calculan al leer) para que la lista no tenga que traer las recomendaciones.
+    // Se recalculan en la misma operación que agrega o borra una (ver productosService)
+    puntajePromedio: { type: Number, default: null },
+    cantidadRecomendaciones: { type: Number, default: 0 },
   },
   { timestamps: true }
 );

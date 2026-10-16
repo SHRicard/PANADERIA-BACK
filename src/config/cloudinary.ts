@@ -38,11 +38,11 @@ function numeroEnRango(nombre: string, porDefecto: number, min: number, max: num
 }
 
 function leerMarcaDeProductos(): Marca | null {
-  const posicion = leer('WATERMARK_POSICION').toLowerCase() || 'esquina';
+  const posicion = leer('WATERMARK_POSICION').toLowerCase() || 'centro';
   if (posicion !== 'centro' && posicion !== 'esquina') {
     problemasDeMarca.push('WATERMARK_POSICION tiene que ser "centro" o "esquina"');
   }
-  const ancho = numeroEnRango('WATERMARK_ANCHO', 0.22, 0.1, 0.7);
+  const ancho = numeroEnRango('WATERMARK_ANCHO', 0.3, 0.1, 0.7);
   const opacidad = numeroEnRango('WATERMARK_OPACIDAD', 85, 10, 100, true);
 
   const publicId = leer('CLOUDINARY_WATERMARK_ID');

@@ -1,10 +1,11 @@
 import express, { Router } from 'express';
 import { rateLimit } from 'express-rate-limit';
 import { Types, isValidObjectId } from 'mongoose';
+import { leerItems } from '../controllers/carritoController';
 import { requiereAdmin } from '../middleware/auth';
 import { Cliente, ICliente } from '../models/Cliente';
 import { ESTADOS_PEDIDO, EstadoPedido, IItemPedido, Pedido } from '../models/Pedido';
-import { Producto } from '../models/Producto';
+import * as carritoService from '../services/carritoService';
 import { leerPaginado } from '../utils/paginado';
 import { normalizarTelefono } from '../utils/telefono';
 
@@ -55,49 +56,26 @@ router.post('/', limitarPedidos, leerJson, async (req, res) => {
     nota = body.nota.trim() || undefined;
   }
 
-  if (!Array.isArray(body.items) || body.items.length < 1 || body.items.length > 30) {
-    return res.status(400).json({ error: 'El pedido tiene que tener entre 1 y 30 productos' });
-  }
+  // Los productos repetidos se juntan en un solo item sumando las cantidades (las mismas reglas que el carrito)
+  const cantidades = leerItems(body.items, { minimo: 1, fueraDeRango: 'El pedido tiene que tener entre 1 y 30 productos' });
+  if (typeof cantidades === 'string') return res.status(400).json({ error: cantidades });
 
-  // Los productos repetidos se juntan en un solo item sumando las cantidades
-  const cantidades = new Map<string, number>();
-  for (const item of body.items as unknown[]) {
-    if (!esObjeto(item) || typeof item.productoId !== 'string' || !isValidObjectId(item.productoId)) {
-      return res.status(400).json({ error: 'Hay un producto con un id inválido' });
-    }
-    const cantidad = item.cantidad;
-    if (typeof cantidad !== 'number' || !Number.isInteger(cantidad) || cantidad < 1 || cantidad > 50) {
-      return res.status(400).json({ error: 'La cantidad de cada producto tiene que ser un entero entre 1 y 50' });
-    }
-    const id = new Types.ObjectId(item.productoId).toString();
-    cantidades.set(id, (cantidades.get(id) ?? 0) + cantidad);
-  }
-  if ([...cantidades.values()].some((c) => c > 50)) {
-    return res.status(400).json({ error: 'No se pueden pedir más de 50 unidades de un mismo producto' });
-  }
-
-  const ids = [...cantidades.keys()];
-  const productos = await Producto.find({ _id: { $in: ids }, disponible: true }).select('nombre precio categoria');
-  const porId = new Map(productos.map((p) => [p.id as string, p]));
-
-  const noDisponibles = ids.filter((id) => !porId.has(id));
-  if (noDisponibles.length > 0) {
+  // Nombre, precio, categoría y total salen de la base, con la misma cuenta que el carrito
+  const cotizacion = await carritoService.cotizar(cantidades);
+  if (cotizacion.noDisponibles.length > 0) {
     return res.status(400).json({
       error: 'Hay productos que no existen o no están disponibles',
-      productosNoDisponibles: noDisponibles,
+      productosNoDisponibles: cotizacion.noDisponibles,
     });
   }
-
-  // Nombre, precio, categoría y total salen de la base: nunca se confía en lo que manda el cliente
-  const items: IItemPedido[] = [];
-  for (const [id, cantidad] of cantidades) {
-    const producto = porId.get(id);
-    if (producto) {
-      const { nombre, precio, categoria } = producto;
-      items.push({ producto: producto._id, nombre, precio, categoria, cantidad });
-    }
-  }
-  const total = Math.round(items.reduce((suma, i) => suma + i.precio * i.cantidad, 0) * 100) / 100;
+  const items: IItemPedido[] = cotizacion.items.map(({ producto, nombre, precio, categoria, cantidad }) => ({
+    producto,
+    nombre,
+    precio,
+    categoria,
+    cantidad,
+  }));
+  const { total } = cotizacion;
 
   const cliente = await Cliente.findOneAndUpdate(
     { telefono },
