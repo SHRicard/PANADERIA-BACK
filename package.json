@@ -9,7 +9,9 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "crear-admin": "tsx src/scripts/crearAdmin.ts",
-    "subir-marca": "tsx src/scripts/subirMarca.ts"
+    "subir-marca": "tsx src/scripts/subirMarca.ts",
+    "sembrar": "tsx src/scripts/sembrarProductos.ts",
+    "migrar-anticipacion": "tsx src/scripts/migrarAnticipacion.ts"
   },
   "keywords": [],
   "author": "",

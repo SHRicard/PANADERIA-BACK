@@ -75,6 +75,23 @@ export function enviarACloudinary(buffer: Buffer, carpeta: keyof typeof TRANSFOR
   });
 }
 
+// Copia una foto que YA está en nuestro Cloudinary, sin volver a grabarle la marca (ya la tiene).
+// La usa el script de productos de ejemplo: cada producto necesita su propia copia, porque al eliminar
+// un producto se borran sus fotos de Cloudinary y una foto compartida dejaría sin foto a los demás
+export async function copiarEnCloudinary(url: string, carpeta: keyof typeof TRANSFORMACIONES) {
+  // Solo fotos propias: una de afuera no tiene la marca de agua
+  if (!url.startsWith(`https://res.cloudinary.com/${cloudinary.config().cloud_name}/image/upload/`)) {
+    throw new Error('Solo se pueden copiar fotos de nuestro Cloudinary');
+  }
+  try {
+    const resultado = await cloudinary.uploader.upload(url, { folder: `panaderia/${carpeta}`, resource_type: 'image' });
+    return { url: resultado.secure_url, publicId: resultado.public_id };
+  } catch (error) {
+    console.error(`Cloudinary no pudo copiar una foto: ${describirErrorCloudinary(error)}`);
+    throw new Error('No se pudo copiar la foto en Cloudinary');
+  }
+}
+
 // Si falla no corta la operación (la foto ya salió de la base), pero queda en el log con su publicId
 // para poder borrarla a mano y que no quede huérfana
 export async function borrarDeCloudinary(publicId?: string) {

@@ -1,6 +1,12 @@
 import { Request, Response } from 'express';
 import { isValidObjectId } from 'mongoose';
-import { buscarCategoria, CATEGORIA_INVALIDA } from '../models/Producto';
+import {
+  ANTICIPACION_INVALIDA,
+  buscarCategoria,
+  CATEGORIA_INVALIDA,
+  MAX_ANTICIPACION_HORAS,
+  MAX_ETIQUETA,
+} from '../models/Producto';
 import * as productosService from '../services/productosService';
 import { leerPaginado } from '../utils/paginado';
 
@@ -24,11 +30,17 @@ function numeroMayorQueCero(valor: unknown): number | undefined {
   return Number.isFinite(numero) && numero > 0 ? numero : undefined;
 }
 
+// Horas enteras, con el 0 permitido (se puede pedir en el momento)
+function horasDeAnticipacion(valor: unknown): number | undefined {
+  const numero = typeof valor === 'number' ? valor : typeof valor === 'string' && valor.trim() ? Number(valor) : NaN;
+  return Number.isInteger(numero) && numero >= 0 && numero <= MAX_ANTICIPACION_HORAS ? numero : undefined;
+}
+
 // Un opcional se borra mandándolo vacío: null (JSON) o "" (multipart, donde todo es texto)
 const estaVacio = (valor: unknown) => valor === null || (typeof valor === 'string' && valor.trim() === '');
 
 // Devuelve los datos listos para guardar, o el mensaje de error.
-// En una edición (parcial) solo se valida lo que vino; al crear, nombre, precio y categoría son obligatorios.
+// En una edición (parcial) solo se valida lo que vino; al crear, nombre, precio, categoría y anticipación son obligatorios.
 // Un opcional vacío queda en undefined: al crear no se guarda, y al editar se borra del producto
 function leerDatos(body: unknown, parcial: boolean): productosService.DatosProducto | string {
   const campos = (typeof body === 'object' && body !== null ? body : {}) as Record<string, unknown>;
@@ -52,6 +64,12 @@ function leerDatos(body: unknown, parcial: boolean): productosService.DatosProdu
     }
     datos.categoria = categoria;
   }
+  if (!parcial || campos.anticipacionHoras !== undefined) {
+    if (campos.anticipacionHoras === undefined || estaVacio(campos.anticipacionHoras)) return 'La anticipación es obligatoria';
+    const horas = horasDeAnticipacion(campos.anticipacionHoras);
+    if (horas === undefined) return ANTICIPACION_INVALIDA;
+    datos.anticipacionHoras = horas;
+  }
   if (campos.pesoGramos !== undefined) {
     const peso = numeroMayorQueCero(campos.pesoGramos);
     if (peso === undefined && !estaVacio(campos.pesoGramos)) return 'El peso tiene que ser un número mayor que 0';
@@ -59,6 +77,12 @@ function leerDatos(body: unknown, parcial: boolean): productosService.DatosProdu
   }
   if (campos.descripcion !== undefined) {
     datos.descripcion = estaVacio(campos.descripcion) ? undefined : String(campos.descripcion);
+  }
+  if (campos.etiqueta !== undefined) {
+    const etiqueta = typeof campos.etiqueta === 'string' ? campos.etiqueta.trim().replace(/\s+/g, ' ') : null;
+    if (etiqueta === null && campos.etiqueta !== null) return 'La etiqueta tiene que ser un texto';
+    if (etiqueta && etiqueta.length > MAX_ETIQUETA) return `La etiqueta puede tener hasta ${MAX_ETIQUETA} caracteres`;
+    datos.etiqueta = etiqueta || undefined;
   }
   if (campos.disponible !== undefined) datos.disponible = campos.disponible === true || campos.disponible === 'true';
   const ingredientes = parsearIngredientes(campos.ingredientes);
@@ -155,5 +179,14 @@ export async function borrarImagen(req: Request<{ id: string; imagenId: string }
   if (!isValidObjectId(id) || !isValidObjectId(imagenId)) return res.status(404).json({ error: 'No encontrado' });
 
   await productosService.borrarImagen(id, imagenId);
+  res.status(204).end();
+}
+
+// DELETE /api/productos/:id/recomendaciones/:recomendacionId  (borra una y recalcula el promedio)
+export async function borrarRecomendacion(req: Request<{ id: string; recomendacionId: string }>, res: Response) {
+  const { id, recomendacionId } = req.params;
+  if (!isValidObjectId(id) || !isValidObjectId(recomendacionId)) return res.status(404).json({ error: 'No encontrado' });
+
+  await productosService.borrarRecomendacion(id, recomendacionId);
   res.status(204).end();
 }
