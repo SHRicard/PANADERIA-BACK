@@ -15,5 +15,6 @@ router.delete('/:id', productosController.borrar);
 router.put('/:id/portada', productosController.cambiarPortada);
 router.post('/:id/imagenes', subirImagen, productosController.agregarImagen);
 router.delete('/:id/imagenes/:imagenId', productosController.borrarImagen);
+router.delete('/:id/recomendaciones/:recomendacionId', productosController.borrarRecomendacion);
 
 export default router;

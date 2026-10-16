@@ -5,7 +5,9 @@ import {
   Categoria,
   IImagen,
   IProducto,
+  IRecomendacion,
   MAX_IMAGENES_PRODUCTO,
+  MAX_RECOMENDACIONES_PRODUCTO,
   Producto,
   SIN_MAYUSCULAS_NI_ACENTOS,
 } from '../models/Producto';
@@ -13,8 +15,13 @@ import { ErrorHttp } from '../utils/errores';
 import { Paginado } from '../utils/paginado';
 import { regexSinAcentos } from '../utils/texto';
 
-// Las fotos no se editan por acá: se suben aparte (Buffer[]) y se borran de a una
-export type DatosProducto = Partial<Omit<IProducto, 'imagenes'>>;
+// Las fotos no se editan por acá: se suben aparte (Buffer[]) y se borran de a una.
+// Las recomendaciones y su resumen tampoco: las deja la web y el dueño solo las borra
+export type DatosProducto = Partial<
+  Omit<IProducto, 'imagenes' | 'recomendaciones' | 'puntajePromedio' | 'cantidadRecomendaciones'>
+>;
+
+export type DatosRecomendacion = Omit<IRecomendacion, 'createdAt'>;
 
 function borrarImagenes(imagenes: IImagen[]) {
   return Promise.all(imagenes.map((imagen) => borrarDeCloudinary(imagen.publicId)));
@@ -115,13 +122,15 @@ export async function listar({ buscar, categoria, disponible }: FiltrosProductos
       { $sort: { ordenCategoria: 1, nombre: 1, _id: 1 } },
       { $skip: (pagina - 1) * limite },
       { $limit: limite },
-      { $project: { ordenCategoria: 0, 'imagenes.publicId': 0 } },
+      // Las recomendaciones van solo en el detalle: en la lista alcanza con puntajePromedio y cantidadRecomendaciones
+      { $project: { ordenCategoria: 0, 'imagenes.publicId': 0, recomendaciones: 0 } },
     ]).collation(SIN_MAYUSCULAS_NI_ACENTOS), // "árbol" junto a "Arroz", no después de la Z
     Producto.countDocuments(filtro),
   ]);
   return {
-    // hydrate: para que cada foto salga con el toJSON del esquema ({ id, url, miniatura })
-    productos: encontrados.map((producto) => Producto.hydrate(producto)),
+    // hydrate: para que cada foto salga con el toJSON del esquema ({ id, url, miniatura }).
+    // Con la proyección no le pone "recomendaciones: []" por defecto, que haría parecer que no tiene
+    productos: encontrados.map((producto) => Producto.hydrate(producto, { recomendaciones: 0 })),
     pagina,
     limite,
     totalProductos,
@@ -236,4 +245,70 @@ export async function borrarImagen(id: string, imagenId: string) {
 
   await Producto.updateOne({ _id: id }, { $pull: { imagenes: { _id: imagenId } } });
   await borrarDeCloudinary(imagen.publicId);
+}
+
+// Recalcula el resumen con las recomendaciones que quedaron, en la misma operación que las cambia
+const RECALCULAR_RESUMEN = {
+  $set: {
+    puntajePromedio: { $round: [{ $avg: '$recomendaciones.puntaje' }, 1] },
+    cantidadRecomendaciones: { $size: '$recomendaciones' },
+  },
+};
+
+// Una sola operación (atómica): la pone primera, descarta las que pasan del tope y recalcula el promedio.
+// Si llegan dos a la vez, ninguna pisa a la otra. ❌ No lo pases a leer-agregar-guardar.
+// Solo productos activos: uno pausado no sale en el catálogo
+export async function agregarRecomendacion(id: string, datos: DatosRecomendacion) {
+  const nueva = { _id: new Types.ObjectId(), ...datos, createdAt: new Date() };
+  const producto = await Producto.findOneAndUpdate(
+    { _id: id, disponible: true },
+    [
+      {
+        $set: {
+          recomendaciones: {
+            $slice: [
+              // $literal: el texto lo escribe cualquiera, y en un pipeline un "$nombre" se leería como un campo
+              { $concatArrays: [[{ $literal: nueva }], { $ifNull: ['$recomendaciones', []] }] },
+              MAX_RECOMENDACIONES_PRODUCTO,
+            ],
+          },
+        },
+      },
+      RECALCULAR_RESUMEN,
+    ],
+    {
+      returnDocument: 'after',
+      updatePipeline: true,
+      // Que alguien comente no es una edición del producto
+      timestamps: false,
+      projection: { recomendaciones: { $elemMatch: { _id: nueva._id } }, puntajePromedio: 1, cantidadRecomendaciones: 1 },
+    }
+  );
+  if (!producto) throw new ErrorHttp(404, 'No encontrado');
+  return {
+    recomendacion: producto.recomendaciones[0],
+    puntajePromedio: producto.puntajePromedio,
+    cantidadRecomendaciones: producto.cantidadRecomendaciones,
+  };
+}
+
+// También en una sola operación: la saca y recalcula el promedio
+export async function borrarRecomendacion(id: string, recomendacionId: string) {
+  // El pipeline va directo a Mongo: por eso el id se convierte a mano
+  const recomendacion = new Types.ObjectId(recomendacionId);
+  const resultado = await Producto.updateOne(
+    { _id: id, 'recomendaciones._id': recomendacion },
+    [
+      {
+        $set: {
+          recomendaciones: {
+            $filter: { input: '$recomendaciones', as: 'r', cond: { $ne: ['$$r._id', recomendacion] } },
+          },
+        },
+      },
+      RECALCULAR_RESUMEN,
+    ],
+    { updatePipeline: true, timestamps: false }
+  );
+  if (resultado.matchedCount === 0) throw new ErrorHttp(404, 'No encontrado');
 }

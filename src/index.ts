@@ -7,7 +7,9 @@ import multer from 'multer';
 import { comprobarMarca, problemasDeConfiguracion } from './config/cloudinary';
 import { conectarDB } from './config/db';
 import { mensajeDeMulter } from './middleware/upload';
+import ajustesRoutes from './routes/ajustes';
 import authRoutes from './routes/auth';
+import carritoRoutes from './routes/carrito';
 import catalogoRoutes from './routes/catalogo';
 import clientesRoutes from './routes/clientes';
 import pedidosRoutes from './routes/pedidos';
@@ -37,8 +39,10 @@ app.use(
   })
 );
 
-// Va antes del express.json() global: trae su propio parser con límite de 10kb para la ruta pública
+// Van antes del express.json() global: traen su propio parser con límite de 10kb para las rutas públicas
 app.use('/api/pedidos', pedidosRoutes);
+app.use('/api/carrito', carritoRoutes);
+app.use('/api/catalogo', catalogoRoutes);
 
 app.use(express.json());
 
@@ -46,10 +50,10 @@ app.use(express.json());
 app.get('/health', (_req, res) => res.send('ok'));
 
 app.use('/api/auth', authRoutes);
-app.use('/api/catalogo', catalogoRoutes);
 app.use('/api/productos', productosRoutes);
 app.use('/api/promos', promosRoutes);
 app.use('/api/clientes', clientesRoutes);
+app.use('/api/ajustes', ajustesRoutes);
 
 // Manejo de errores (incluye errores de multer, de Cloudinary, de Mongoose y del parser de JSON)
 app.use((err: Error & { status?: number; type?: string }, _req: Request, res: Response, _next: NextFunction) => {
