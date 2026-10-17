@@ -93,8 +93,22 @@ Respuesta de `POST /api/carrito`: `{ "items": [{ "productoId", "nombre", "precio
 | PATCH  | `/api/ajustes`                                        | Cambiar los ajustes de la web: `{ "estiloCatalogo": "vidriera" \| "carta" }`. Solo cambia lo que viene; un valor fuera de la lista da `400`. Responde los ajustes completos                                                     |
 | PUT    | `/api/datos-pago`                                     | Cargar o reemplazar los datos de pago (ver abajo). Responde los datos guardados                                                                                                                                                 |
 | DELETE | `/api/datos-pago`                                     | Borrar los datos de pago: la web deja de mostrarlos. Responde `204` (`404` si no había)                                                                                                                                         |
+| GET    | `/api/insumos`                                        | Los insumos (harina, manteca…), por nombre, con el precio y la fecha de la última compra. Sin el historial |
+| GET    | `/api/insumos/:id`                                    | Un insumo con su historial (`logs`), la entrada más nueva primero |
+| POST   | `/api/insumos`                                        | Cargar un insumo: `{ "nombre": "HARINA 20 KG", "precio": 540000, "fecha": "2026-10-01" }` (`fecha` opcional: hoy). Responde `201` |
+| PUT    | `/api/insumos/:id`                                    | Actualizarlo (una compra nueva o una corrección): solo lo que viene. Suma una entrada al historial |
 
 Campos de producto: `nombre` (obligatorio y **único**: no puede haber dos productos con el mismo nombre, sin importar mayúsculas, acentos ni espacios de más; si se repite, `409` "Ya existe un producto con ese nombre: «…»"), `precio` (obligatorio, mayor que 0), `categoria` (obligatoria: el **gusto**, uno de la lista fija), `anticipacionHoras` (obligatoria: con cuántas horas de anticipación hay que encargarlo, entero de 0 a 720; `0` = se puede pedir en el momento. Es informativa: se muestra en el catálogo y el pedido no la controla), `descripcion`, `etiqueta` (texto libre de hasta 30 caracteres para destacarlo en el catálogo, por ejemplo "Nuevo", "Promo lanzamiento" o "El más elegido"), `ingredientes` (JSON `["harina","sal"]` o texto `harina, sal`), `pesoGramos` (mayor que 0), `disponible` (`true` = activo, `false` = pausado) e `imagenes` (hasta 10 archivos por request, solo imágenes, máx. 10 MB cada uno). `descripcion`, `etiqueta` y `pesoGramos` son opcionales: mandarlos vacíos (`null` en JSON o `""`) los borra.
+
+### Insumos
+
+Lo que compra el dueño para producir, con lo que pagó, para tener el historial de gastos. Es privado (en la app, Más → Insumos).
+
+- **Un documento por insumo:** `nombre` (de 2 a 60 caracteres, **único** sin importar mayúsculas ni acentos), `precio` (lo que pagó en la última compra, mayor que 0) y `fecha` (el día de esa compra, `AAAA-MM-DD`, no posterior a hoy en Argentina; si no viene, hoy).
+- **Cada compra nueva se carga como una actualización** del mismo insumo, por ejemplo `PUT /api/insumos/:id` con `{ "precio": 54000, "fecha": "2026-10-15" }`. Crear otro con el mismo nombre da `409`.
+- **`logs`** es el historial, dentro del mismo documento: el alta y cada actualización suman una entrada con cómo quedó (`nombre`, `precio`, `fecha`), qué cambió (`cambios`: `["precio", "fecha"]`) y cuándo se registró (`registradoEn`). La más nueva va primero. Si lo que se manda es igual a lo guardado, no suma entrada.
+- La lista no trae `logs`; el detalle, la respuesta del alta y la de la actualización sí.
+- No hay borrado.
 
 Datos de pago (`PUT /api/datos-pago`, los cuatro obligatorios): `nombreCompleto` (el titular, de 3 a 80 caracteres), `alias` (de 6 a 20 caracteres: letras sin acentos, números, puntos y guiones), `cbu` (CBU o CVU: 22 números, **como texto**; se aceptan espacios o guiones entre los números y se guardan solo los números; se revisan los dígitos verificadores, así un número mal copiado da `400`) y `billetera` (texto libre de 2 a 40 caracteres: "Mercado Pago", "Ualá", "Banco Nación"…). Es **un solo** juego de datos: cada `PUT` reemplaza al anterior. **Son públicos a propósito**: cualquiera los puede leer con `GET /api/datos-pago`.
 
