@@ -2,11 +2,12 @@
 // No agregan marca: la marca ya está grabada en la imagen desde que se subió.
 
 const SEGMENTO_UPLOAD = '/image/upload/';
+const SEGMENTO_VIDEO = '/video/upload/';
 
-function esDeCloudinary(url: string): boolean {
+function esDeCloudinary(url: string, segmento = SEGMENTO_UPLOAD): boolean {
   try {
     const { hostname, pathname } = new URL(url);
-    return hostname === 'res.cloudinary.com' && pathname.includes(SEGMENTO_UPLOAD);
+    return hostname === 'res.cloudinary.com' && pathname.includes(segmento);
   } catch {
     return false;
   }
@@ -27,4 +28,13 @@ export function urlMiniatura(url: string, ancho = 400): string {
 /** La foto en su tamaño, en el formato y la calidad que mejor le vengan al navegador */
 export function urlOptimizada(url: string): string {
   return conTransformacion(url, 'q_auto,f_auto');
+}
+
+/**
+ * Un fotograma del video (el primero), chico y en .jpg: la miniatura de un video en las listas.
+ * Cloudinary lo saca del video al pedir la URL: con la extensión .jpg devuelve una imagen
+ */
+export function urlPortadaDeVideo(url: string, ancho = 400): string {
+  if (!esDeCloudinary(url, SEGMENTO_VIDEO)) return url;
+  return url.replace(SEGMENTO_VIDEO, `${SEGMENTO_VIDEO}so_0,w_${ancho},c_limit,q_auto/`).replace(/\.\w+$/, '.jpg');
 }
