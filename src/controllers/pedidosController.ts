@@ -63,6 +63,35 @@ export async function crear(req: Request, res: Response) {
   });
 }
 
+const MONTO_SENA_INVALIDO = 'El monto de la seña tiene que ser un número mayor que 0';
+
+const esMontoValido = (monto: unknown): monto is number =>
+  typeof monto === 'number' && Number.isFinite(monto) && monto > 0;
+
+// POST /api/pedidos/manuales  { cliente: { nombre, telefono }, items: [{ productoId, cantidad }], nota?, sena?: { monto } }
+// El dueño carga un pedido que le hicieron por fuera de la web. Responde 201 con el detalle
+export async function crearManual(req: Request, res: Response) {
+  const datos = leerPedido(req.body);
+  if (typeof datos === 'string') return res.status(400).json({ error: datos });
+
+  // Sin sena (o null): entra pendiente. Con sena: el cliente ya la transfirió y entra confirmado
+  const sena: unknown = esObjeto(req.body) ? req.body.sena : undefined;
+  let montoSena: number | undefined;
+  if (sena !== undefined && sena !== null) {
+    if (!esObjeto(sena) || !esMontoValido(sena.monto)) return res.status(400).json({ error: MONTO_SENA_INVALIDO });
+    montoSena = Math.round(sena.monto * 100) / 100;
+  }
+
+  const resultado = await pedidosService.crearManual({ ...datos, montoSena });
+  if (resultado.noDisponibles) {
+    return res.status(400).json({
+      error: 'Hay productos que no existen',
+      productosNoDisponibles: resultado.noDisponibles,
+    });
+  }
+  res.status(201).json(resultado.pedido);
+}
+
 // GET /api/pedidos?estado=pendiente&pagina=1&limite=20
 export async function listar(req: Request, res: Response) {
   const { estado } = req.query;
@@ -83,9 +112,7 @@ export async function registrarSena(req: Request<{ id: string }>, res: Response)
   if (!isValidObjectId(req.params.id)) return res.status(404).json({ error: 'No encontrado' });
 
   const monto: unknown = esObjeto(req.body) ? req.body.monto : undefined;
-  if (typeof monto !== 'number' || !Number.isFinite(monto) || monto <= 0) {
-    return res.status(400).json({ error: 'El monto de la seña tiene que ser un número mayor que 0' });
-  }
+  if (!esMontoValido(monto)) return res.status(400).json({ error: MONTO_SENA_INVALIDO });
   res.json(await pedidosService.registrarSena(req.params.id, Math.round(monto * 100) / 100));
 }
 

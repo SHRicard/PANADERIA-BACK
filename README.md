@@ -79,8 +79,9 @@ Respuesta de `POST /api/carrito`: `{ "items": [{ "productoId", "nombre", "precio
 | DELETE | `/api/productos/:id/recomendaciones/:recomendacionId` | Borrar una recomendación (por ejemplo, una ofensiva). Recalcula el promedio. Responde `204`                                                                                                                                     |
 | POST   | `/api/promos`                                         | Crear promo (multipart: `titulo`, `texto`, `imagen`)                                                                                                                                                                            |
 | DELETE | `/api/promos/:id`                                     | Borrar promo                                                                                                                                                                                                                    |
-| GET    | `/api/pedidos`                                        | Pedidos, del más nuevo al más viejo (`?estado=pendiente`, `?pagina=1`, `?limite=20`, máx. 100). Cada uno con su `saldo` (ver abajo)                                                                                             |
-| GET    | `/api/pedidos/:id`                                    | Detalle de un pedido con los datos del cliente, su cantidad de pedidos y el `saldo`                                                                                                                                             |
+| GET    | `/api/pedidos`                                        | Pedidos, del más nuevo al más viejo (`?estado=pendiente`, `?pagina=1`, `?limite=20`, máx. 100). Cada uno con su `saldo` y su `origen` (ver abajo)                                                                                             |
+| GET    | `/api/pedidos/:id`                                    | Detalle de un pedido con los datos del cliente, su cantidad de pedidos el `saldo` y el `origen`                                                                                                                                             |
+| POST   | `/api/pedidos/manuales`                               | Cargar un pedido que le hicieron al dueño por fuera de la web (WhatsApp, en persona). Mismo body que el pedido público, más `"sena": { "monto": 35000 }` opcional. Responde `201` con el detalle (ver abajo) |
 | PUT    | `/api/pedidos/:id/sena`                               | Confirmar la seña: `{ "monto": 35000 }` (mayor que 0 y hasta el total). Pasa a `confirmado`. Otra vez sobre un pedido confirmado, corrige el monto. Responde el detalle                                                         |
 | DELETE | `/api/pedidos/:id/sena`                               | Quitar la seña (por si se confirmó por error): vuelve a `pendiente`. Responde el detalle                                                                                                                                        |
 | PUT    | `/api/pedidos/:id/entrega`                            | Marcar entregado, con o sin seña. Responde el detalle                                                                                                                                                                           |
@@ -109,6 +110,26 @@ Datos de pago (`PUT /api/datos-pago`, los cuatro obligatorios): `nombreCompleto`
 - El estado no se cambia directo: lo cambian estas acciones, que además guardan el dato que corresponde: `sena: { monto, pagadaEn }`, `entregadoEn` o `canceladoEn`. Los pedidos anteriores no tienen esos campos.
 - Cada respuesta de pedidos (lista, detalle y acciones) trae **`saldo`**: lo que falta cobrar al entregar (total menos la seña). Se calcula, no se guarda.
 - Si el pedido está en un estado que no permite la acción (por ejemplo, cancelar uno entregado), responde `409` con el motivo. Si dos acciones llegan a la vez, gana una y la otra recibe `409`.
+- Cada pedido trae **`origen`**: `web` (lo hizo el cliente desde la web) o `manual` (lo cargó el dueño). Los pedidos anteriores a este campo salen como `web`.
+
+### Pedido manual
+
+`POST /api/pedidos/manuales` (privado) es para que el dueño cargue un pedido que le hicieron por WhatsApp o en persona, y use la app como agenda:
+
+```json
+{
+  "cliente": { "nombre": "Doña Rosa", "telefono": "11 4444-1234" },
+  "items": [{ "productoId": "...", "cantidad": 2 }],
+  "nota": "Lo retira el sábado",
+  "sena": { "monto": 12000 }
+}
+```
+
+- Las mismas reglas que el pedido de la web: el cliente se crea o se actualiza por teléfono, y nombre, precio y total salen de la base.
+- **Puede incluir productos pausados** (por ejemplo, el pan dulce que le encargan fuera de temporada). Los eliminados no: `400` con `productosNoDisponibles`.
+- `sena` es opcional. Sin seña, entra `pendiente`; con seña (mayor que 0 y hasta el total), entra `confirmado`.
+- Queda con `origen: "manual"` y sigue los mismos pasos que cualquier pedido: seña, entrega y cancelación.
+- No tiene el límite de 10 por hora del pedido público.
 
 Categorías: son el **gusto** del producto, de una lista fija en `src/models/Producto.ts` y en este orden: Dulce, Salado, Agridulce, Ácido, Amargo, Picante. Se aceptan sin importar mayúsculas ni acentos (`acido` se guarda como `Ácido`); cualquier otra (`Dulse`, `Facturas`) responde `400` con la lista. Cada pedido guarda el gusto de cada producto al momento de la venta, para las métricas.
 
