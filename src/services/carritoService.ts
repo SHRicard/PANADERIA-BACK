@@ -12,10 +12,13 @@ export interface ItemCotizado {
 }
 
 // Nombre, precio y total salen de la base, nunca de lo que manda el cliente. La usan el carrito (para mostrarlo)
-// y el pedido (para guardarlo): así el total que ve el cliente en el carrito es el mismo que después tiene el pedido
-export async function cotizar(cantidades: Map<string, number>) {
+// y el pedido (para guardarlo): así el total que ve el cliente en el carrito es el mismo que después tiene el pedido.
+// incluirPausados es solo para el pedido manual del dueño: puede anotar un producto pausado (el pan dulce que le
+// encargan en octubre). El cliente nunca: un pausado no se puede pedir desde la web
+export async function cotizar(cantidades: Map<string, number>, { incluirPausados = false } = {}) {
   const ids = [...cantidades.keys()];
-  const productos = await Producto.find({ _id: { $in: ids }, disponible: true }).select({
+  const filtro = incluirPausados ? { _id: { $in: ids } } : { _id: { $in: ids }, disponible: true };
+  const productos = await Producto.find(filtro).select({
     nombre: 1,
     precio: 1,
     categoria: 1,
@@ -34,7 +37,7 @@ export async function cotizar(cantidades: Map<string, number>) {
 
   return {
     items,
-    // Pausados, eliminados o que nunca existieron
+    // Pausados (salvo incluirPausados), eliminados o que nunca existieron
     noDisponibles: ids.filter((id) => !porId.has(id)),
     total: Math.round(items.reduce((suma, item) => suma + item.precio * item.cantidad, 0) * 100) / 100,
   };
