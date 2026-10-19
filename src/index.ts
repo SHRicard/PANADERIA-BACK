@@ -109,7 +109,8 @@ if (problemasCloudinary.length) {
 
 conectarDB()
   .then(() => {
-    app.listen(puerto, () => console.log(`API escuchando en el puerto ${puerto}`));
+    // 0.0.0.0: todas las interfaces, como pide Render para detectar el puerto
+    app.listen(puerto, '0.0.0.0', () => console.log(`API escuchando en el puerto ${puerto}`));
     // No se espera: en Render cada segundo de arranque cuenta, y si falta el logo solo avisa
     comprobarMarca();
   })
