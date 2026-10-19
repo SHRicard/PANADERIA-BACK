@@ -18,6 +18,8 @@ const limitarPedidos = rateLimit({
 });
 
 router.post('/', limitarPedidos, leerJson, pedidosController.crear);
+// El pedido que carga el dueño a mano: privado y sin el límite por IP del público
+router.post('/manuales', requiereAdmin, leerJson, pedidosController.crearManual);
 
 router.get('/', requiereAdmin, pedidosController.listar);
 router.get('/:id', requiereAdmin, pedidosController.detalle);

@@ -5,6 +5,10 @@ import { Schema, Types, model } from 'mongoose';
 export const ESTADOS_PEDIDO = ['pendiente', 'confirmado', 'entregado', 'cancelado'] as const;
 export type EstadoPedido = (typeof ESTADOS_PEDIDO)[number];
 
+// web: lo hizo el cliente desde la web · manual: lo cargó el dueño desde la app (un pedido por WhatsApp o en persona)
+export const ORIGENES_PEDIDO = ['web', 'manual'] as const;
+export type OrigenPedido = (typeof ORIGENES_PEDIDO)[number];
+
 /** La seña que transfirió el cliente. La confirma el dueño desde la app cuando ve la plata */
 export interface ISena {
   monto: number;
@@ -28,6 +32,7 @@ export interface IPedido {
   items: IItemPedido[];
   total: number;
   estado: EstadoPedido;
+  origen: OrigenPedido;
   nota?: string;
   /** Solo si el dueño confirmó la seña */
   sena?: ISena;
@@ -77,6 +82,8 @@ const pedidoSchema = new Schema<IPedido>(
     },
     total: { type: Number, required: true, min: 0 },
     estado: { type: String, enum: ESTADOS_PEDIDO, default: 'pendiente' },
+    // Los pedidos anteriores a este campo no lo tienen guardado: son todos de la web (pedidosService lo completa)
+    origen: { type: String, enum: ORIGENES_PEDIDO, default: 'web' },
     nota: { type: String, trim: true, maxlength: 300 },
     // Opcionales: los pedidos anteriores no los tienen. Que la seña no pase del total lo controla pedidosService
     sena: { type: senaSchema },

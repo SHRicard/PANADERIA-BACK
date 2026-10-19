@@ -1,6 +1,6 @@
 import { PipelineStage, Types } from 'mongoose';
 import { Cliente, ICliente } from '../models/Cliente';
-import { EstadoPedido, IItemPedido, IPedido, Pedido } from '../models/Pedido';
+import { EstadoPedido, IItemPedido, IPedido, OrigenPedido, Pedido } from '../models/Pedido';
 import { ErrorHttp } from '../utils/errores';
 import { Paginado } from '../utils/paginado';
 import * as carritoService from './carritoService';
@@ -14,6 +14,13 @@ export interface DatosPedido {
   nota?: string;
 }
 
+/** El pedido que carga el dueño a mano: lo mismo, más la seña si el cliente ya la transfirió */
+export interface DatosPedidoManual extends DatosPedido {
+  montoSena?: number;
+}
+
+type Cotizacion = Awaited<ReturnType<typeof carritoService.cotizar>>;
+
 const NO_ENCONTRADO = 'No encontrado';
 
 // Seña, entrega y cancelación solo mientras el pedido sigue abierto
@@ -26,9 +33,13 @@ const VOLVER_A_ABIERTO: PipelineStage.Set = {
 
 const redondear = (monto: number) => Math.round(monto * 100) / 100;
 
-// Lo que falta cobrar al entregar: el total menos la seña, si la pagó. Se calcula, no se guarda
-function conSaldo<T extends Pick<IPedido, 'total' | 'sena'>>(pedido: T) {
-  return { ...pedido, saldo: redondear(pedido.total - (pedido.sena?.monto ?? 0)) };
+const senaMayorQueTotal = (total: number) =>
+  new ErrorHttp(400, `La seña no puede ser más que el total del pedido ($${total.toLocaleString('es-AR')})`);
+
+// Lo que se agrega al responder: el saldo (lo que falta cobrar al entregar: el total menos la seña, si la pagó),
+// que se calcula y no se guarda, y el origen de los pedidos anteriores a ese campo, que son todos de la web
+function completar<T extends Pick<IPedido, 'total' | 'sena'> & { origen?: OrigenPedido }>(pedido: T) {
+  return { ...pedido, origen: pedido.origen ?? 'web', saldo: redondear(pedido.total - (pedido.sena?.monto ?? 0)) };
 }
 
 // Una acción no encontró el pedido en un estado que la permita: ¿no existe (404) o está en otro estado (409)?
@@ -43,12 +54,13 @@ async function sinEstado(id: string, mensaje: string) {
   return (await Pedido.exists({ _id: id })) ? new ErrorHttp(409, mensaje) : new ErrorHttp(404, NO_ENCONTRADO);
 }
 
-// Nombre, precio, categoría y total salen de la base, con la misma cuenta que el carrito.
-// Si hay productos pausados o eliminados no lo crea: devuelve cuáles son
-export async function crear({ nombre, telefono, cantidades, nota }: DatosPedido) {
-  const cotizacion = await carritoService.cotizar(cantidades);
-  if (cotizacion.noDisponibles.length > 0) return { noDisponibles: cotizacion.noDisponibles };
-
+// Lo que comparten el pedido de la web y el manual: el cliente se crea o se actualiza por teléfono, y nombre,
+// precio, categoría y total salen de la cotización (de la base), nunca de lo que mande el front
+async function guardar(
+  { nombre, telefono, nota }: DatosPedido,
+  cotizacion: Cotizacion,
+  extra: Pick<IPedido, 'origen'> & Partial<Pick<IPedido, 'estado' | 'sena'>>
+) {
   const items: IItemPedido[] = cotizacion.items.map((item) => ({
     producto: item.producto,
     nombre: item.nombre,
@@ -64,15 +76,34 @@ export async function crear({ nombre, telefono, cantidades, nota }: DatosPedido)
   );
   if (!cliente) throw new Error('No se pudo registrar el cliente');
 
-  const pedido = await Pedido.create({
+  return Pedido.create({
     cliente: cliente._id,
     clienteNombre: nombre,
     clienteTelefono: telefono,
     items,
     total: cotizacion.total,
     nota,
+    ...extra,
   });
-  return { pedido };
+}
+
+// El pedido del cliente desde la web. Si hay productos pausados o eliminados no lo crea: devuelve cuáles son
+export async function crear(datos: DatosPedido) {
+  const cotizacion = await carritoService.cotizar(datos.cantidades);
+  if (cotizacion.noDisponibles.length > 0) return { noDisponibles: cotizacion.noDisponibles };
+  return { pedido: await guardar(datos, cotizacion, { origen: 'web' }) };
+}
+
+// El pedido que carga el dueño (le escribieron por WhatsApp, se lo pidieron en persona): las mismas reglas que el
+// de la web, pero puede incluir productos pausados. Si ya cobró la seña, entra confirmado. Responde el detalle
+export async function crearManual({ montoSena, ...datos }: DatosPedidoManual) {
+  const cotizacion = await carritoService.cotizar(datos.cantidades, { incluirPausados: true });
+  if (cotizacion.noDisponibles.length > 0) return { noDisponibles: cotizacion.noDisponibles };
+  if (montoSena !== undefined && montoSena > cotizacion.total) throw senaMayorQueTotal(cotizacion.total);
+
+  const conSena = montoSena !== undefined && { estado: 'confirmado' as const, sena: { monto: montoSena, pagadaEn: new Date() } };
+  const pedido = await guardar(datos, cotizacion, { origen: 'manual', ...conSena });
+  return { pedido: await obtener(pedido.id) };
 }
 
 // Del más nuevo al más viejo
@@ -87,7 +118,7 @@ export async function listar(estado: EstadoPedido | undefined, { pagina, limite 
     Pedido.countDocuments(filtro),
   ]);
   return {
-    pedidos: pedidos.map(conSaldo),
+    pedidos: pedidos.map(completar),
     pagina,
     limite,
     totalPedidos,
@@ -108,7 +139,7 @@ export async function obtener(id: string) {
   const cliente = pedido.cliente
     ? { ...pedido.cliente, cantidadPedidos: await Pedido.countDocuments({ cliente: pedido.cliente._id }) }
     : null;
-  return conSaldo({ ...pedido, cliente });
+  return completar({ ...pedido, cliente });
 }
 
 // Cada acción es UNA operación condicionada al estado: si dos llegan a la vez (dos toques, la app y la compu),
@@ -124,9 +155,7 @@ export async function registrarSena(id: string, monto: number) {
   );
   if (!actualizado) {
     const pedido = await Pedido.findById(id).select('estado total').lean();
-    if (pedido && ABIERTOS.includes(pedido.estado)) {
-      throw new ErrorHttp(400, `La seña no puede ser más que el total del pedido ($${pedido.total.toLocaleString('es-AR')})`);
-    }
+    if (pedido && ABIERTOS.includes(pedido.estado)) throw senaMayorQueTotal(pedido.total);
     throw await noSePudo(id, {
       entregado: 'El pedido ya está entregado: no se puede cambiar la seña',
       cancelado: 'El pedido está cancelado: no se puede cambiar la seña',
