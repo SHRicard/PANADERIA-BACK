@@ -152,9 +152,9 @@ async function main() {
 
   const origenes = env('CORS_ORIGINS').split(',').map((o) => o.trim()).filter(Boolean);
   if (!origenes.length) {
-    aviso('CORS_ORIGINS está vacía: la web no va a poder usar la API (la APK sí)');
+    ok('CORS_ORIGINS vacía: solo la web de Vercel y localhost:5173 (fijas en index.ts)');
   } else {
-    ok(`CORS_ORIGINS (${origenes.length} ${origenes.length === 1 ? 'dominio' : 'dominios'})`);
+    ok(`CORS_ORIGINS (${origenes.length} ${origenes.length === 1 ? 'dominio' : 'dominios'} además de los fijos de index.ts)`);
     // index.ts compara el origin exacto: "*" o una "/" final nunca coinciden con lo que manda el navegador
     if (origenes.includes('*')) aviso('CORS_ORIGINS no acepta "*": poné los dominios de la web');
     if (origenes.some((o) => o.endsWith('/'))) aviso('Sacá la "/" final de los dominios de CORS_ORIGINS: si no, no coinciden');

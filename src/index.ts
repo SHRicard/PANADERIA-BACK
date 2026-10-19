@@ -28,10 +28,15 @@ app.set('trust proxy', 1);
 
 app.use(helmet());
 
-const origenesPermitidos = (process.env.CORS_ORIGINS ?? '')
-  .split(',')
-  .map((o) => o.trim())
-  .filter(Boolean);
+// La web en desarrollo (Vite) y en Vercel van fijas; CORS_ORIGINS suma otros sin tener que redeployar
+const origenesPermitidos = [
+  'http://localhost:5173',
+  'https://panaderia-front-psi.vercel.app',
+  ...(process.env.CORS_ORIGINS ?? '')
+    .split(',')
+    .map((o) => o.trim())
+    .filter(Boolean),
+];
 
 app.use(
   cors({
@@ -40,6 +45,8 @@ app.use(
       if (!origin || origenesPermitidos.includes(origin)) return cb(null, true);
       cb(new ErrorHttp(403, 'Origen no permitido por CORS'));
     },
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
   })
 );
 

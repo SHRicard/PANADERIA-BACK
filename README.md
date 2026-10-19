@@ -10,7 +10,7 @@ Node.js + TypeScript + Express + MongoDB (Mongoose) + Cloudinary + login con JWT
    - `JWT_SECRET`: una clave larga y aleatoria.
    - `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY` y `CLOUDINARY_API_SECRET` (**obligatorias**: sin ellas la API no arranca): datos del Dashboard de Cloudinary.
    - `CLOUDINARY_WATERMARK_ID`, `WATERMARK_POSICION`, `WATERMARK_ANCHO` y `WATERMARK_OPACIDAD`: la marca de agua (ver [Fotos y marca de agua](#fotos-y-marca-de-agua)).
-   - `CORS_ORIGINS`: dominios de tu web (separados por coma).
+   - `CORS_ORIGINS` (opcional): dominios extra de la web, separados por coma. `https://panaderia-front-psi.vercel.app` y `http://localhost:5173` ya están permitidos en `src/index.ts`.
    - `ADMIN_USER` / `ADMIN_PASSWORD`: usuario y contraseña del jefe.
    - `ADMIN_EMAIL`: email del jefe, a donde le llega el código si se olvida la contraseña.
    - `SMTP_*` y `EMAIL_FROM` (opcionales): cuenta que manda ese código. Con Gmail, usá una contraseña de aplicación.
@@ -28,6 +28,7 @@ Node.js + TypeScript + Express + MongoDB (Mongoose) + Cloudinary + login con JWT
 - Build Command: `npm install && npm run build`
 - Start Command: `npm start`
 - Cargar las variables del `.env` en _Environment_ (no subas el `.env` a Git).
+- `CORS_ORIGINS` solo si la web suma otro dominio (sin `/` al final): `https://panaderia-front-psi.vercel.app` ya está fijo en `src/index.ts`.
 - En MongoDB Atlas, permitir el acceso desde cualquier IP (`0.0.0.0/0`) en _Network Access_, porque Render no tiene IP fija en el plan gratuito.
 - Ping de mantenimiento (UptimeRobot / cron-job.org): `GET /health`
 
