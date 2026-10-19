@@ -32,6 +32,10 @@ export interface IPromo {
   updatedAt: Date;
 }
 
+/** La miniatura .jpg de la promo: en los videos, el primer fotograma */
+export const miniaturaDePromo = (promo: Pick<IPromo, 'tipo' | 'archivoUrl'>) =>
+  promo.tipo === 'video' ? urlPortadaDeVideo(promo.archivoUrl) : urlMiniatura(promo.archivoUrl);
+
 const promoSchema = new Schema<IPromo>(
   {
     tipo: { type: String, enum: TIPOS_PROMO, required: true },
@@ -64,7 +68,7 @@ const promoSchema = new Schema<IPromo>(
         titulo: promo.titulo,
         texto: promo.texto,
         url: promo.archivoUrl,
-        miniatura: promo.tipo === 'video' ? urlPortadaDeVideo(promo.archivoUrl) : urlMiniatura(promo.archivoUrl),
+        miniatura: miniaturaDePromo(promo),
         duracionSegundos: promo.duracionSegundos,
         vecesPublicada: promo.vecesPublicada,
         ultimaPublicacion: promo.ultimaPublicacion ?? null,

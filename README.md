@@ -99,6 +99,8 @@ Respuesta de `POST /api/carrito`: `{ "items": [{ "productoId", "nombre", "precio
 | GET    | `/api/insumos/:id`                                    | Un insumo con su historial (`logs`), la entrada más nueva primero |
 | POST   | `/api/insumos`                                        | Cargar un insumo: `{ "nombre": "HARINA 20 KG", "precio": 540000, "fecha": "2026-10-01" }` (`fecha` opcional: hoy). Responde `201` |
 | PUT    | `/api/insumos/:id`                                    | Actualizarlo (una compra nueva o una corrección): solo lo que viene. Suma una entrada al historial |
+| GET    | `/api/almacenamiento`                                 | Cuánto del plan de Cloudinary está usado (créditos, almacenamiento, ancho de banda y transformaciones) y qué tan cerca está del límite (ver [Almacenamiento](#almacenamiento)) |
+| GET    | `/api/almacenamiento/archivos`                        | Las fotos de productos y las promos, **lo que más ocupa primero**, para elegir qué borrar (`?origen=producto` o `?origen=promo`, `?pagina=1`, `?limite=20`, máx. 100) |
 
 Campos de producto: `nombre` (obligatorio y **único**: no puede haber dos productos con el mismo nombre, sin importar mayúsculas, acentos ni espacios de más; si se repite, `409` "Ya existe un producto con ese nombre: «…»"), `precio` (obligatorio, mayor que 0), `categoria` (obligatoria: el **gusto**, uno de la lista fija), `anticipacionHoras` (obligatoria: con cuántas horas de anticipación hay que encargarlo, entero de 0 a 720; `0` = se puede pedir en el momento. Es informativa: se muestra en el catálogo y el pedido no la controla), `descripcion`, `etiqueta` (texto libre de hasta 30 caracteres para destacarlo en el catálogo, por ejemplo "Nuevo", "Promo lanzamiento" o "El más elegido"), `ingredientes` (JSON `["harina","sal"]` o texto `harina, sal`), `pesoGramos` (mayor que 0), `disponible` (`true` = activo, `false` = pausado) e `imagenes` (hasta 10 archivos por request, solo imágenes, máx. 10 MB cada uno). `descripcion`, `etiqueta` y `pesoGramos` son opcionales: mandarlos vacíos (`null` en JSON o `""`) los borra.
 
@@ -121,6 +123,27 @@ Lo que compra el dueño para producir, con lo que pagó, para tener el historial
 - **`logs`** es el historial, dentro del mismo documento: el alta y cada actualización suman una entrada con cómo quedó (`nombre`, `precio`, `fecha`), qué cambió (`cambios`: `["precio", "fecha"]`) y cuándo se registró (`registradoEn`). La más nueva va primero. Si lo que se manda es igual a lo guardado, no suma entrada.
 - La lista no trae `logs`; el detalle, la respuesta del alta y la de la actualización sí.
 - No hay borrado.
+
+### Almacenamiento
+
+El uso de la cuenta de Cloudinary, para que el dueño vea si se está quedando sin lugar (en la app, Más → Almacenamiento). Es privado.
+
+- **Créditos:** el plan gratis de Cloudinary tiene **25 créditos**. Un crédito es 1 GB guardado, 1 GB entregado (las fotos que se ven en la web y en la app) o 1000 transformaciones (la marca de agua al subir, las miniaturas, los formatos). Lo guardado cuenta como está **ahora**; lo entregado y las transformaciones, en los **últimos 30 días** (no se reinicia a principio de mes).
+- **Si se pasa del límite**, Cloudinary le manda emails a la cuenta y, si sigue pasado, la **deshabilita**: no se pueden subir fotos y el catálogo deja de mostrarlas. Para bajar el uso: borrar promos viejas (los videos son lo que más pesa) y fotos que ya no se usan.
+- **Respuesta:** `{ plan, nivel, creditos: { usados, limite, restantes, porcentaje }, almacenamiento: { bytes, creditos }, anchoDeBanda: { bytes, creditos }, transformaciones: { cantidad, creditos }, archivos, derivados, actualizadoAl, consultadoEn }`.
+  - `nivel`: `ok` (menos del 75% de los créditos), `atencion` (desde el 75%), `critico` (desde el 90%) o `excedido` (desde el 100%).
+  - `actualizadoAl` es el día del último cálculo de Cloudinary (`AAAA-MM-DD`, o `null`): no actualiza los números en el momento.
+  - El desglose por rubro puede no sumar exacto `creditos.usados` (Cloudinary redondea y a veces descuenta un ajuste: ese rubro sale en `0`).
+- El servidor guarda la respuesta **10 minutos** (la API de administración de Cloudinary permite 500 consultas por hora en el plan gratis), así que `consultadoEn` puede ser de hace un rato.
+- Si Cloudinary no responde: `502` ("No se pudo consultar el uso de Cloudinary. Probá de nuevo en unos minutos.").
+
+**Para liberar lugar**, `GET /api/almacenamiento/archivos` lista lo que hay guardado, lo que más ocupa primero, y cada archivo trae lo que hace falta para borrarlo con los endpoints de siempre:
+
+- **Foto de un producto:** `{ origen: "producto", productoId, imagenId, nombre, portada, disponible, bytes, miniatura, subidoEn }` → `DELETE /api/productos/:productoId/imagenes/:imagenId`.
+- **Promo:** `{ origen: "promo", promoId, titulo, tipo: "imagen" | "video", bytes, miniatura, subidoEn }` → `DELETE /api/promos/:promoId` (la promo entera: tiene un solo archivo).
+- Responde `{ archivos, pagina, limite, totalArchivos, totalPaginas, totalBytes }` (`totalBytes`: lo que ocupan todos, con el filtro). Un `origen` que no es `producto` ni `promo` da `400`.
+- `bytes` es lo que ocupa el archivo en Cloudinary (sin contar sus miniaturas). Lo que se borra sale de la lista enseguida, pero el resumen de `GET /api/almacenamiento` lo descuenta recién cuando Cloudinary recalcula.
+- El servidor le pregunta a Cloudinary cuánto ocupa cada archivo **una sola vez** (no cambia nunca) y lo recuerda mientras está prendido: pedir la lista seguido no gasta consultas, salvo por lo recién subido. Si Cloudinary no responde: `502`.
 
 Datos de pago (`PUT /api/datos-pago`, los cuatro obligatorios): `nombreCompleto` (el titular, de 3 a 80 caracteres), `alias` (de 6 a 20 caracteres: letras sin acentos, números, puntos y guiones), `cbu` (CBU o CVU: 22 números, **como texto**; se aceptan espacios o guiones entre los números y se guardan solo los números; se revisan los dígitos verificadores, así un número mal copiado da `400`) y `billetera` (texto libre de 2 a 40 caracteres: "Mercado Pago", "Ualá", "Banco Nación"…). Es **un solo** juego de datos: cada `PUT` reemplaza al anterior. **Son públicos a propósito**: cualquiera los puede leer con `GET /api/datos-pago`.
 
