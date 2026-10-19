@@ -1,5 +1,7 @@
+export const ZONA_ARGENTINA = 'America/Argentina/Buenos_Aires';
+
 // en-CA formatea como AAAA-MM-DD. Con la zona de Argentina: Render corre en UTC y a las 21 hs ya sería mañana
-const formatoDia = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' });
+const formatoDia = new Intl.DateTimeFormat('en-CA', { timeZone: ZONA_ARGENTINA });
 
 // El día de hoy en Argentina, como AAAA-MM-DD
 export function hoyEnArgentina(): string {

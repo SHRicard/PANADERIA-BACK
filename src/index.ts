@@ -15,6 +15,7 @@ import catalogoRoutes from './routes/catalogo';
 import clientesRoutes from './routes/clientes';
 import datosPagoRoutes from './routes/datosPago';
 import insumosRoutes from './routes/insumos';
+import metricasRoutes from './routes/metricas';
 import pedidosRoutes from './routes/pedidos';
 import productosRoutes from './routes/productos';
 import promosRoutes from './routes/promos';
@@ -60,6 +61,7 @@ app.use('/api/ajustes', ajustesRoutes);
 app.use('/api/datos-pago', datosPagoRoutes);
 app.use('/api/insumos', insumosRoutes);
 app.use('/api/almacenamiento', almacenamientoRoutes);
+app.use('/api/metricas', metricasRoutes);
 
 // Manejo de errores (incluye errores de multer, de Cloudinary, de Mongoose y del parser de JSON)
 app.use((err: Error & { status?: number; type?: string }, _req: Request, res: Response, _next: NextFunction) => {
