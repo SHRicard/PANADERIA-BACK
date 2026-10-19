@@ -3,7 +3,7 @@ import { CAMPOS_INSUMO, IInsumo, Insumo } from '../models/Insumo';
 import { SIN_MAYUSCULAS_NI_ACENTOS } from '../models/Producto';
 import { ErrorHttp } from '../utils/errores';
 
-export type DatosInsumo = Pick<IInsumo, 'nombre' | 'precio' | 'fecha'>;
+export type DatosInsumo = Pick<IInsumo, 'nombre' | 'precio' | 'fecha' | 'cantidad' | 'unidad'>;
 
 const NO_ENCONTRADO = 'No encontrado';
 
@@ -39,7 +39,7 @@ export async function crear(datos: DatosInsumo) {
   }
 }
 
-// Cambia lo que viene (normalmente, una compra nueva: precio y fecha) y suma al historial cómo quedó y qué cambió.
+// Cambia lo que viene (normalmente, una compra nueva: precio, fecha y, si cambió, cantidad y unidad) y suma al historial cómo quedó y qué cambió.
 // Es UNA operación (pipeline): el cambio y su entrada en el historial no se pueden separar, y dos actualizaciones
 // a la vez no se pisan. ❌ No lo pases a leer-cambiar-guardar. Si lo que vino es igual a lo guardado, no hay entrada
 // nueva ni cambia updatedAt. El pipeline no pasa por los validadores: el controller valida antes
@@ -63,6 +63,9 @@ export async function actualizar(id: string, cambios: Partial<DatosInsumo>) {
         nombre: nuevo('nombre'),
         precio: nuevo('precio'),
         fecha: nuevo('fecha'),
+        // Un insumo de antes que no la tiene y no la recibe sigue sin tenerla: "$cantidad" de un campo que no existe no lo crea
+        cantidad: nuevo('cantidad'),
+        unidad: nuevo('unidad'),
         logs: {
           $cond: [
             huboCambios,
@@ -75,6 +78,8 @@ export async function actualizar(id: string, cambios: Partial<DatosInsumo>) {
                     nombre: nuevo('nombre'),
                     precio: nuevo('precio'),
                     fecha: nuevo('fecha'),
+                    cantidad: nuevo('cantidad'),
+                    unidad: nuevo('unidad'),
                     cambios: '$_cambios',
                     registradoEn: '$$NOW',
                   },

@@ -97,10 +97,16 @@ Respuesta de `POST /api/carrito`: `{ "items": [{ "productoId", "nombre", "precio
 | DELETE | `/api/datos-pago`                                     | Borrar los datos de pago: la web deja de mostrarlos. Responde `204` (`404` si no había)                                                                                                                                         |
 | GET    | `/api/insumos`                                        | Los insumos (harina, manteca…), por nombre, con el precio y la fecha de la última compra. Sin el historial |
 | GET    | `/api/insumos/:id`                                    | Un insumo con su historial (`logs`), la entrada más nueva primero |
-| POST   | `/api/insumos`                                        | Cargar un insumo: `{ "nombre": "HARINA 20 KG", "precio": 540000, "fecha": "2026-10-01" }` (`fecha` opcional: hoy). Responde `201` |
-| PUT    | `/api/insumos/:id`                                    | Actualizarlo (una compra nueva o una corrección): solo lo que viene. Suma una entrada al historial |
+| POST   | `/api/insumos`                                        | Cargar un insumo: `{ "nombre": "Harina", "precio": 25000, "cantidad": 25, "unidad": "kg", "fecha": "2026-10-01" }` (`fecha` opcional: hoy). Responde `201` |
+| PUT    | `/api/insumos/:id`                                    | Actualizarlo (una compra nueva o una corrección): solo lo que viene (`cantidad` y `unidad`, juntas). Suma una entrada al historial |
 | GET    | `/api/almacenamiento`                                 | Cuánto del plan de Cloudinary está usado (créditos, almacenamiento, ancho de banda y transformaciones) y qué tan cerca está del límite (ver [Almacenamiento](#almacenamiento)) |
 | GET    | `/api/almacenamiento/archivos`                        | Las fotos de productos y las promos, **lo que más ocupa primero**, para elegir qué borrar (`?origen=producto` o `?origen=promo`, `?pagina=1`, `?limite=20`, máx. 100) |
+| GET    | `/api/metricas/productos`                             | Los **productos más vendidos** en un rango de días (`?desde=2026-10-01&hasta=2026-10-31`, los dos opcionales), por unidades o por importe (`?orden=unidades` o `?orden=importe`), paginado (ver [Métricas](#métricas)) |
+| GET    | `/api/metricas/gustos`                                | Lo vendido de **cada gusto**, del que más se vende al que menos (`?desde`, `?hasta`, `?orden`) |
+| GET    | `/api/metricas/pedidos`                               | Los pedidos hechos en el rango: **por estado**, **web contra manuales**, **% de cancelados**, **ticket promedio** y **por día de la semana** |
+| GET    | `/api/metricas/clientes`                              | Los clientes que compraron en el rango: **nuevos**, **los que vuelven** y los que compraron más de una vez |
+| GET    | `/api/metricas/insumos`                               | **En qué insumos se gastó más** y **cuánto aumentó cada uno** respecto de la compra anterior |
+| GET    | `/api/metricas/balance`                               | **Lo que entra por ventas, lo que sale en insumos y la ganancia**, con la serie por día, semana o mes (`?agrupar=dia\|semana\|mes`, por defecto `mes`) |
 
 Campos de producto: `nombre` (obligatorio y **único**: no puede haber dos productos con el mismo nombre, sin importar mayúsculas, acentos ni espacios de más; si se repite, `409` "Ya existe un producto con ese nombre: «…»"), `precio` (obligatorio, mayor que 0), `categoria` (obligatoria: el **gusto**, uno de la lista fija), `anticipacionHoras` (obligatoria: con cuántas horas de anticipación hay que encargarlo, entero de 0 a 720; `0` = se puede pedir en el momento. Es informativa: se muestra en el catálogo y el pedido no la controla), `descripcion`, `etiqueta` (texto libre de hasta 30 caracteres para destacarlo en el catálogo, por ejemplo "Nuevo", "Promo lanzamiento" o "El más elegido"), `ingredientes` (JSON `["harina","sal"]` o texto `harina, sal`), `pesoGramos` (mayor que 0), `disponible` (`true` = activo, `false` = pausado) e `imagenes` (hasta 10 archivos por request, solo imágenes, máx. 10 MB cada uno). `descripcion`, `etiqueta` y `pesoGramos` son opcionales: mandarlos vacíos (`null` en JSON o `""`) los borra.
 
@@ -118,9 +124,10 @@ La biblioteca de publicaciones del dueño: arma cada promo **una vez** (una foto
 
 Lo que compra el dueño para producir, con lo que pagó, para tener el historial de gastos. Es privado (en la app, Más → Insumos).
 
-- **Un documento por insumo:** `nombre` (de 2 a 60 caracteres, **único** sin importar mayúsculas ni acentos), `precio` (lo que pagó en la última compra, mayor que 0) y `fecha` (el día de esa compra, `AAAA-MM-DD`, no posterior a hoy en Argentina; si no viene, hoy).
+- **Un documento por insumo:** `nombre` (de 2 a 60 caracteres, **único** sin importar mayúsculas ni acentos), `precio` (lo que pagó en la última compra, mayor que 0), `cantidad` y `unidad` (cuánto vino en esa compra: `cantidad` mayor que 0 y hasta 100000, con decimales; `unidad`, `kg`, `l` o `unidad`) y `fecha` (el día de esa compra, `AAAA-MM-DD`, no posterior a hoy en Argentina; si no viene, hoy).
+- **`cantidad` y `unidad` van juntas** (`25` sin decir si son kilos o litros no sirve): al crear, las dos son obligatorias (`400` "Falta la cantidad" / "Falta la unidad"); al actualizar, las dos o ninguna. Así el precio se compara por kilo, por litro o por unidad: 10 kg a $ 20.000 y 25 kg a $ 25.000 son el mismo insumo (`Harina`), y el segundo sale la mitad el kilo. Los insumos cargados antes no las tienen (no salen en la respuesta) hasta que se corrigen.
 - **Cada compra nueva se carga como una actualización** del mismo insumo, por ejemplo `PUT /api/insumos/:id` con `{ "precio": 54000, "fecha": "2026-10-15" }`. Crear otro con el mismo nombre da `409`.
-- **`logs`** es el historial, dentro del mismo documento: el alta y cada actualización suman una entrada con cómo quedó (`nombre`, `precio`, `fecha`), qué cambió (`cambios`: `["precio", "fecha"]`) y cuándo se registró (`registradoEn`). La más nueva va primero. Si lo que se manda es igual a lo guardado, no suma entrada.
+- **`logs`** es el historial, dentro del mismo documento: el alta y cada actualización suman una entrada con cómo quedó (`nombre`, `precio`, `fecha`, `cantidad`, `unidad`), qué cambió (`cambios`: `["precio", "fecha", "cantidad"]`) y cuándo se registró (`registradoEn`). La más nueva va primero. Si lo que se manda es igual a lo guardado, no suma entrada.
 - La lista no trae `logs`; el detalle, la respuesta del alta y la de la actualización sí.
 - No hay borrado.
 
@@ -144,6 +151,36 @@ El uso de la cuenta de Cloudinary, para que el dueño vea si se está quedando s
 - Responde `{ archivos, pagina, limite, totalArchivos, totalPaginas, totalBytes }` (`totalBytes`: lo que ocupan todos, con el filtro). Un `origen` que no es `producto` ni `promo` da `400`.
 - `bytes` es lo que ocupa el archivo en Cloudinary (sin contar sus miniaturas). Lo que se borra sale de la lista enseguida, pero el resumen de `GET /api/almacenamiento` lo descuenta recién cuando Cloudinary recalcula.
 - El servidor le pregunta a Cloudinary cuánto ocupa cada archivo **una sola vez** (no cambia nunca) y lo recuerda mientras está prendido: pedir la lista seguido no gasta consultas, salvo por lo recién subido. Si Cloudinary no responde: `502`.
+
+### Métricas
+
+Lo que el dueño ve de cómo va el negocio. Es privado y se calcula al vuelo sobre los pedidos y los insumos: no hay contadores guardados.
+
+- **Una venta es un pedido que no se canceló** (pendiente, confirmado o entregado), y cuenta el **día en que se hizo el pedido, en Argentina**. Si después se cancela, deja de sumar solo.
+- **Rango (en todas):** `?desde=AAAA-MM-DD&hasta=AAAA-MM-DD`, los dos días incluidos y los dos opcionales (sin ninguno, todo el historial). Una fecha que no existe o `desde` posterior a `hasta` dan `400`. La respuesta trae `desde` y `hasta` como se pidieron (`null` si no vinieron).
+- **`?orden=unidades`** (por defecto) **o `?orden=importe`** en productos y gustos. Otro valor da `400`.
+
+**Productos más vendidos** (`GET /api/metricas/productos`): `{ desde, hasta, orden, totalPedidos, totalUnidades, totalImporte, productos, pagina, limite, totalProductos, totalPaginas }`. Cada producto: `{ nombre, productoId, categoria, unidades, importe, pedidos }`.
+- **Se agrupa por nombre**, sin importar mayúsculas ni acentos (el nombre del producto es único así justamente para esto): un producto borrado y vuelto a crear con el mismo nombre suma junto. Si se renombra, las ventas de antes quedan con el nombre viejo.
+- `importe` es precio del momento × cantidad; `pedidos`, en cuántos pedidos salió. `nombre`, `productoId` y `categoria` (el gusto) son los de la última venta: el producto puede ya no existir. Los totales son de todo el rango, no de la página.
+
+**Gustos** (`GET /api/metricas/gustos`): `{ desde, hasta, orden, totalPedidos, totalUnidades, totalImporte, gustos: [{ gusto, unidades, importe, pedidos }] }`. Vienen todos los gustos de la lista, también los que no se vendieron (en `0`), y al final los que ya no están en la lista pero tienen ventas viejas. `pedidos` cuenta una vez un pedido con varios productos del mismo gusto.
+
+**Pedidos** (`GET /api/metricas/pedidos`): todos los pedidos **hechos** en el rango, con el estado que tienen hoy. `{ desde, hasta, totalPedidos, porEstado: { pendiente, confirmado, entregado, cancelado }, porOrigen: { web, manual }, porcentajeCancelados, ticketPromedio, porDiaDeLaSemana: [{ dia, pedidos }] }`.
+- `ticketPromedio` es el total promedio de las ventas (sin los cancelados). `porcentajeCancelados` va de `0` a `100`, con 2 decimales.
+- `porDiaDeLaSemana` va de `lunes` a `domingo` (`miércoles` y `sábado` con acento), siempre los siete.
+
+**Clientes** (`GET /api/metricas/clientes`): de los clientes que compraron en el rango (sin contar pedidos cancelados), `{ desde, hasta, totalClientes, nuevos, recurrentes, conVariosPedidos }`. `nuevos`: su primera compra fue en el rango; `recurrentes`: ya habían comprado antes (`nuevos + recurrentes = totalClientes`); `conVariosPedidos`: compraron dos veces o más en el rango. Sin `desde`, todos son nuevos.
+
+**Insumos** (`GET /api/metricas/insumos`): los insumos con alguna compra en el rango, del que más se gastó al que menos. `{ desde, hasta, totalGastado, totalCompras, insumos: [{ insumoId, nombre, gastado, compras, ultimaCompra, compraAnterior, variacion, precios }] }`.
+- **Las compras salen del historial (`logs`)**: el alta y cada actualización que cambió la fecha son compras; una que no cambió la fecha (el precio mal cargado, el nombre) corrige la última. Corregir una fecha mal cargada cuenta como otra compra.
+- `ultimaCompra` y `compraAnterior` son `{ fecha, precio, cantidad, unidad, precioPorUnidad }`: la última compra del rango y la anterior a ella, **aunque sea de antes del rango** (`null` si es la primera). `cantidad`, `unidad` y `precioPorUnidad` (`precio / cantidad`) son `null` en las compras cargadas antes de que existieran. `precios` son las compras del rango, de la más vieja a la más nueva.
+- `variacion` es cuánto subió en % (negativo si bajó): **por kilo, litro o unidad** si las dos compras dicen cuánto vino en la misma unidad; por precio si ninguna lo dice (las de antes); `null` si no hay anterior o no se pueden comparar (solo una lo dice, o en otra unidad).
+
+**Balance** (`GET /api/metricas/balance`): `{ desde, hasta, agrupar, ingresos, gastos, ganancia, porCobrar, pedidos, compras, serie: [{ periodo, ingresos, gastos, ganancia }] }`.
+- `ingresos`: el total de las ventas del rango. `gastos`: las compras de insumos del rango (por el día de la compra). `ganancia = ingresos − gastos`: no cuenta los insumos que sobran.
+- `porCobrar`: de esas ventas, lo que falta cobrar de las que no se entregaron (el total menos la seña). Las entregadas se toman como cobradas.
+- `serie`: de a `dia` (`AAAA-MM-DD`), `semana` (el lunes, `AAAA-MM-DD`) o `mes` (`AAAA-MM`). Trae todos los períodos desde `desde` (o el primer día con datos) hasta `hasta`, sin pasar de hoy, también los que dieron `0`. Otro `agrupar` da `400`.
 
 Datos de pago (`PUT /api/datos-pago`, los cuatro obligatorios): `nombreCompleto` (el titular, de 3 a 80 caracteres), `alias` (de 6 a 20 caracteres: letras sin acentos, números, puntos y guiones), `cbu` (CBU o CVU: 22 números, **como texto**; se aceptan espacios o guiones entre los números y se guardan solo los números; se revisan los dígitos verificadores, así un número mal copiado da `400`) y `billetera` (texto libre de 2 a 40 caracteres: "Mercado Pago", "Ualá", "Banco Nación"…). Es **un solo** juego de datos: cada `PUT` reemplaza al anterior. **Son públicos a propósito**: cualquiera los puede leer con `GET /api/datos-pago`.
 
