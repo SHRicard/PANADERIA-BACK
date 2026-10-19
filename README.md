@@ -14,7 +14,7 @@ Node.js + TypeScript + Express + MongoDB (Mongoose) + Cloudinary + login con JWT
    - `ADMIN_USER` / `ADMIN_PASSWORD`: usuario y contraseña del jefe.
    - `ADMIN_EMAIL`: email del jefe, a donde le llega el código si se olvida la contraseña.
    - `SMTP_*` y `EMAIL_FROM` (opcionales): cuenta que manda ese código. Con Gmail, usá una contraseña de aplicación.
-3. Crear el usuario del jefe: `npm run crear-admin` (si ya existe, le actualiza la contraseña y el email)
+3. Crear los usuarios: `npm run crear-admin` (si ya existe, le actualiza la contraseña y el email). Lee `ADMIN_USER`, `ADMIN_PASSWORD` y `ADMIN_EMAIL` del `.env`; la app tiene **dos admins**, y para el segundo se pasan en el comando: `ADMIN_USER=… ADMIN_PASSWORD=… ADMIN_EMAIL=… npm run crear-admin`. Otro `ADMIN_USER` crea una cuenta más
    - Subir el logo de la marca de agua: `npm run subir-marca` (ver [Fotos y marca de agua](#fotos-y-marca-de-agua)).
    - (Opcional) Cargar 10 productos de ejemplo para probar el catálogo: `npm run sembrar`. Copia las fotos de los productos que ya tengan fotos (hace falta al menos uno) y saltea los nombres que ya existen, así que se puede correr más de una vez. Para sacarlos, se eliminan desde la app como cualquier producto (se borran también sus fotos).
    - Si la base tiene productos de antes de la anticipación: `npm run migrar-anticipacion` les pone 24 hs. Sin eso no se pueden editar. Solo toca los que no la tienen, así que se puede correr más de una vez.
