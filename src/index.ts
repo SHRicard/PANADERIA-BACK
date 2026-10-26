@@ -19,6 +19,7 @@ import metricasRoutes from './routes/metricas';
 import pedidosRoutes from './routes/pedidos';
 import productosRoutes from './routes/productos';
 import promosRoutes from './routes/promos';
+import resumenRoutes from './routes/resumen';
 import tiposRoutes from './routes/tipos';
 import { ErrorHttp } from './utils/errores';
 
@@ -71,6 +72,7 @@ app.use('/api/insumos', insumosRoutes);
 app.use('/api/tipos', tiposRoutes);
 app.use('/api/almacenamiento', almacenamientoRoutes);
 app.use('/api/metricas', metricasRoutes);
+app.use('/api/resumen', resumenRoutes);
 
 // Manejo de errores (incluye errores de multer, de Cloudinary, de Mongoose y del parser de JSON)
 app.use((err: Error & { status?: number; type?: string }, _req: Request, res: Response, _next: NextFunction) => {
