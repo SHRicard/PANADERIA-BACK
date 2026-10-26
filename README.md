@@ -114,6 +114,7 @@ Respuesta de `POST /api/carrito`: `{ "items": [{ "productoId", "nombre", "precio
 | GET    | `/api/metricas/clientes`                              | Los clientes que compraron en el rango: **nuevos**, **los que vuelven** y los que compraron más de una vez |
 | GET    | `/api/metricas/insumos`                               | **En qué insumos se gastó más** y **cuánto aumentó cada uno** respecto de la compra anterior |
 | GET    | `/api/metricas/balance`                               | **Lo que entra por ventas, lo que sale en insumos y la ganancia**, con la serie por día, semana o mes (`?agrupar=dia\|semana\|mes`, por defecto `mes`) |
+| GET    | `/api/resumen`                                        | **Lo de hoy** para el inicio de la app: cuántos pedidos se hicieron hoy y cuánto suman, cuántos siguen abiertos (esperando la seña o con la seña pagada) y los últimos 10 de hoy (ver [Resumen del día](#resumen-del-día)) |
 
 Campos de producto: `nombre` (obligatorio y **único**: no puede haber dos productos con el mismo nombre, sin importar mayúsculas, acentos ni espacios de más; si se repite, `409` "Ya existe un producto con ese nombre: «…»"), `precio` (obligatorio, mayor que 0), `categoria` (obligatoria: el **gusto**, uno de la lista fija), `anticipacionHoras` (obligatoria: con cuántas horas de anticipación hay que encargarlo, entero de 0 a 720; `0` = se puede pedir en el momento. Es informativa: se muestra en el catálogo y el pedido no la controla), `descripcion`, `etiqueta` (texto libre de hasta 30 caracteres para destacarlo en el catálogo, por ejemplo "Nuevo", "Promo lanzamiento" o "El más elegido"), `ingredientes` (JSON `["harina","sal"]` o texto `harina, sal`), `pesoGramos` (mayor que 0), `tipo` (opcional: el `_id` de uno de los [tipos](#tipos)), `disponible` (`true` = activo, `false` = pausado) e `imagenes` (hasta 10 archivos por request, solo imágenes, máx. 10 MB cada uno). `descripcion`, `etiqueta`, `pesoGramos` y `tipo` son opcionales: mandarlos vacíos (`null` en JSON o `""`) los borra.
 
@@ -200,6 +201,17 @@ Lo que el dueño ve de cómo va el negocio. Es privado y se calcula al vuelo sob
 - `serie`: de a `dia` (`AAAA-MM-DD`), `semana` (el lunes, `AAAA-MM-DD`) o `mes` (`AAAA-MM`). Trae todos los períodos desde `desde` (o el primer día con datos) hasta `hasta`, sin pasar de hoy, también los que dieron `0`. Otro `agrupar` da `400`.
 
 Datos de pago (`PUT /api/datos-pago`, los cuatro obligatorios): `nombreCompleto` (el titular, de 3 a 80 caracteres), `alias` (de 6 a 20 caracteres: letras sin acentos, números, puntos y guiones), `cbu` (CBU o CVU: 22 números, **como texto**; se aceptan espacios o guiones entre los números y se guardan solo los números; se revisan los dígitos verificadores, así un número mal copiado da `400`) y `billetera` (texto libre de 2 a 40 caracteres: "Mercado Pago", "Ualá", "Banco Nación"…). Es **un solo** juego de datos: cada `PUT` reemplaza al anterior. **Son públicos a propósito**: cualquiera los puede leer con `GET /api/datos-pago`.
+
+### Resumen del día
+
+Lo que ve el dueño al abrir la app (el inicio). Es privado y se calcula al vuelo, como las métricas.
+
+`GET /api/resumen` responde `{ fecha, hoy: { pedidos, vendido }, abiertos: { pendiente, confirmado }, ultimosPedidos }`:
+
+- `fecha`: hoy en Argentina (`AAAA-MM-DD`).
+- `hoy`: las **ventas de hoy**, con la misma cuenta que las métricas (los pedidos hechos hoy que no se cancelaron). `vendido` da lo mismo que los `ingresos` de `GET /api/metricas/balance?desde=<hoy>&hasta=<hoy>`.
+- `abiertos`: los pedidos que siguen `pendiente` (esperando la seña) o `confirmado` (con la seña pagada, para entregar), **de cualquier día**.
+- `ultimosPedidos`: los pedidos de hoy (sin los cancelados), del más nuevo al más viejo, **hasta 10** (si `hoy.pedidos` es más, el resto se ve en `GET /api/pedidos`). Cada uno igual que en `GET /api/pedidos`, con su `saldo` y su `origen`.
 
 ### Estados del pedido
 

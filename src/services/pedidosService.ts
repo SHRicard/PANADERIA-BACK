@@ -24,7 +24,7 @@ type Cotizacion = Awaited<ReturnType<typeof carritoService.cotizar>>;
 const NO_ENCONTRADO = 'No encontrado';
 
 // Seña, entrega y cancelación solo mientras el pedido sigue abierto
-const ABIERTOS: EstadoPedido[] = ['pendiente', 'confirmado'];
+export const ABIERTOS: EstadoPedido[] = ['pendiente', 'confirmado'];
 
 // Al deshacer una entrega o una cancelación, vuelve a como estaba: confirmado si tiene seña, si no pendiente
 const VOLVER_A_ABIERTO: PipelineStage.Set = {
@@ -38,7 +38,7 @@ const senaMayorQueTotal = (total: number) =>
 
 // Lo que se agrega al responder: el saldo (lo que falta cobrar al entregar: el total menos la seña, si la pagó),
 // que se calcula y no se guarda, y el origen de los pedidos anteriores a ese campo, que son todos de la web
-function completar<T extends Pick<IPedido, 'total' | 'sena'> & { origen?: OrigenPedido }>(pedido: T) {
+export function completar<T extends Pick<IPedido, 'total' | 'sena'> & { origen?: OrigenPedido }>(pedido: T) {
   return { ...pedido, origen: pedido.origen ?? 'web', saldo: redondear(pedido.total - (pedido.sena?.monto ?? 0)) };
 }
 
