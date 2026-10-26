@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { isValidObjectId } from 'mongoose';
+import { isValidObjectId, Types } from 'mongoose';
 import {
   ANTICIPACION_INVALIDA,
   buscarCategoria,
@@ -70,6 +70,12 @@ function leerDatos(body: unknown, parcial: boolean): productosService.DatosProdu
     if (horas === undefined) return ANTICIPACION_INVALIDA;
     datos.anticipacionHoras = horas;
   }
+  // Opcional: el id de uno de los tipos del dueño. Vacío, el producto queda sin tipo. Que exista lo revisa el servicio
+  if (campos.tipo !== undefined) {
+    if (estaVacio(campos.tipo)) datos.tipo = null;
+    else if (typeof campos.tipo === 'string' && isValidObjectId(campos.tipo)) datos.tipo = new Types.ObjectId(campos.tipo);
+    else return 'El tipo no es válido';
+  }
   if (campos.pesoGramos !== undefined) {
     const peso = numeroMayorQueCero(campos.pesoGramos);
     if (peso === undefined && !estaVacio(campos.pesoGramos)) return 'El peso tiene que ser un número mayor que 0';
@@ -95,7 +101,7 @@ function buffersDe(archivos: Request['files']): Buffer[] {
   return Array.isArray(archivos) ? archivos.map((archivo) => archivo.buffer) : [];
 }
 
-// ?buscar= (una parte del nombre) y ?categoria= : los usan la lista del dueño y el catálogo público
+// ?buscar= (una parte del nombre), ?categoria= y ?tipo= (el id): los usan la lista del dueño y el catálogo público
 export function leerFiltros(query: Request['query']): productosService.FiltrosProductos | string {
   const filtros: productosService.FiltrosProductos = {};
   if (typeof query.buscar === 'string' && query.buscar.trim()) filtros.buscar = query.buscar.trim().slice(0, 50);
@@ -104,10 +110,14 @@ export function leerFiltros(query: Request['query']): productosService.FiltrosPr
     if (!categoria) return CATEGORIA_INVALIDA;
     filtros.categoria = categoria;
   }
+  if (query.tipo !== undefined && query.tipo !== '') {
+    if (typeof query.tipo !== 'string' || !isValidObjectId(query.tipo)) return 'El tipo no es válido';
+    filtros.tipo = new Types.ObjectId(query.tipo);
+  }
   return filtros;
 }
 
-// GET /api/productos?buscar=&categoria=&estado=activo|pausado&pagina=1&limite=20  (incluye los pausados)
+// GET /api/productos?buscar=&categoria=&tipo=&estado=activo|pausado&pagina=1&limite=20  (incluye los pausados)
 export async function listar(req: Request, res: Response) {
   const filtros = leerFiltros(req.query);
   if (typeof filtros === 'string') return res.status(400).json({ error: filtros });

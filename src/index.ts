@@ -19,6 +19,7 @@ import metricasRoutes from './routes/metricas';
 import pedidosRoutes from './routes/pedidos';
 import productosRoutes from './routes/productos';
 import promosRoutes from './routes/promos';
+import tiposRoutes from './routes/tipos';
 import { ErrorHttp } from './utils/errores';
 
 const app = express();
@@ -67,6 +68,7 @@ app.use('/api/clientes', clientesRoutes);
 app.use('/api/ajustes', ajustesRoutes);
 app.use('/api/datos-pago', datosPagoRoutes);
 app.use('/api/insumos', insumosRoutes);
+app.use('/api/tipos', tiposRoutes);
 app.use('/api/almacenamiento', almacenamientoRoutes);
 app.use('/api/metricas', metricasRoutes);
 
