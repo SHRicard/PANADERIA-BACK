@@ -4,7 +4,8 @@ import mongoose from 'mongoose';
 import { conectarDB } from '../config/db';
 import { Admin } from '../models/Admin';
 
-// Crea (o actualiza la contraseña y el email de) el usuario del jefe: npm run crear-admin
+// Crea (o actualiza la contraseña y el email de) un admin: npm run crear-admin. La app tiene dos: el del .env y el
+// otro, pasando ADMIN_USER, ADMIN_PASSWORD y ADMIN_EMAIL en el comando (dotenv no pisa lo que ya viene en el entorno)
 async function main() {
   const usuario = process.env.ADMIN_USER;
   const password = process.env.ADMIN_PASSWORD;

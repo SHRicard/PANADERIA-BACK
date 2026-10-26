@@ -10,11 +10,11 @@ Node.js + TypeScript + Express + MongoDB (Mongoose) + Cloudinary + login con JWT
    - `JWT_SECRET`: una clave larga y aleatoria.
    - `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY` y `CLOUDINARY_API_SECRET` (**obligatorias**: sin ellas la API no arranca): datos del Dashboard de Cloudinary.
    - `CLOUDINARY_WATERMARK_ID`, `WATERMARK_POSICION`, `WATERMARK_ANCHO` y `WATERMARK_OPACIDAD`: la marca de agua (ver [Fotos y marca de agua](#fotos-y-marca-de-agua)).
-   - `CORS_ORIGINS`: dominios de tu web (separados por coma).
+   - `CORS_ORIGINS` (opcional): dominios extra de la web, separados por coma. `https://panaderia-front-psi.vercel.app` y `http://localhost:5173` ya están permitidos en `src/index.ts`.
    - `ADMIN_USER` / `ADMIN_PASSWORD`: usuario y contraseña del jefe.
    - `ADMIN_EMAIL`: email del jefe, a donde le llega el código si se olvida la contraseña.
    - `SMTP_*` y `EMAIL_FROM` (opcionales): cuenta que manda ese código. Con Gmail, usá una contraseña de aplicación.
-3. Crear el usuario del jefe: `npm run crear-admin` (si ya existe, le actualiza la contraseña y el email)
+3. Crear los usuarios: `npm run crear-admin` (si ya existe, le actualiza la contraseña y el email). Lee `ADMIN_USER`, `ADMIN_PASSWORD` y `ADMIN_EMAIL` del `.env`; la app tiene **dos admins**, y para el segundo se pasan en el comando: `ADMIN_USER=… ADMIN_PASSWORD=… ADMIN_EMAIL=… npm run crear-admin`. Otro `ADMIN_USER` crea una cuenta más
    - Subir el logo de la marca de agua: `npm run subir-marca` (ver [Fotos y marca de agua](#fotos-y-marca-de-agua)).
    - (Opcional) Cargar 10 productos de ejemplo para probar el catálogo: `npm run sembrar`. Copia las fotos de los productos que ya tengan fotos (hace falta al menos uno) y saltea los nombres que ya existen, así que se puede correr más de una vez. Para sacarlos, se eliminan desde la app como cualquier producto (se borran también sus fotos).
    - Si la base tiene productos de antes de la anticipación: `npm run migrar-anticipacion` les pone 24 hs. Sin eso no se pueden editar. Solo toca los que no la tienen, así que se puede correr más de una vez.
@@ -28,6 +28,7 @@ Node.js + TypeScript + Express + MongoDB (Mongoose) + Cloudinary + login con JWT
 - Build Command: `npm install && npm run build`
 - Start Command: `npm start`
 - Cargar las variables del `.env` en _Environment_ (no subas el `.env` a Git).
+- `CORS_ORIGINS` solo si la web suma otro dominio (sin `/` al final): `https://panaderia-front-psi.vercel.app` ya está fijo en `src/index.ts`.
 - En MongoDB Atlas, permitir el acceso desde cualquier IP (`0.0.0.0/0`) en _Network Access_, porque Render no tiene IP fija en el plan gratuito.
 - Ping de mantenimiento (UptimeRobot / cron-job.org): `GET /health`
 
@@ -40,6 +41,8 @@ Node.js + TypeScript + Express + MongoDB (Mongoose) + Cloudinary + login con JWT
 | GET    | `/health`                           | Responde `ok`                                                                                                                                                                                                                                                                       |
 | GET    | `/api/catalogo`                     | Productos activos, paginados (ver [Listas paginadas y filtros](#listas-paginadas-y-filtros)). Cada uno trae `portada` (miniatura de la primera foto, o `null`) y `cantidadImagenes`, sin el array de fotos, y `puntajePromedio` y `cantidadRecomendaciones` sin las recomendaciones |
 | GET    | `/api/catalogo/categorias`          | Los gustos (la lista fija de categorías), en orden: `[{ "nombre": "Dulce", "cantidad": 5 }, …]` (`cantidad` = productos activos)                                                                                                                                                    |
+| GET    | `/api/catalogo/secciones`           | **La carta, agrupada por tipo**: todos los activos que coinciden, sin paginar (`?tipo=`, `?categoria=`, `?buscar=`, combinables). Secciones por nombre del tipo; los sin tipo, al final con `"tipo": null` (ver [Carta y filtros de la web](#carta-y-filtros-de-la-web)) |
+| GET    | `/api/catalogo/filtros`             | Las opciones de los filtros de la web: los tipos y los gustos con al menos un producto activo, con su `cantidad` (sin aplicar filtros) |
 | GET    | `/api/catalogo/:id`                 | Detalle de un producto activo, con todas sus fotos (`imagenes: [{ id, url, miniatura }]`) y sus recomendaciones (ver [Recomendaciones](#recomendaciones))                                                                                                                           |
 | POST   | `/api/catalogo/:id/recomendaciones` | Dejar una recomendación sin login: `{ "puntaje": 5, "texto": "...", "autor": "..." }`. Solo productos activos. Máx. 10 por hora por IP y body de hasta 10kb                                                                                                                         |
 | GET    | `/api/ajustes`                      | Lo que eligió el dueño para la web: `{ "estiloCatalogo": "vidriera" \| "carta" }`. Sin cambios guardados, responde los de por defecto (`carta`)                                                                                                                                     |
@@ -99,6 +102,10 @@ Respuesta de `POST /api/carrito`: `{ "items": [{ "productoId", "nombre", "precio
 | GET    | `/api/insumos/:id`                                    | Un insumo con su historial (`logs`), la entrada más nueva primero |
 | POST   | `/api/insumos`                                        | Cargar un insumo: `{ "nombre": "Harina", "precio": 25000, "cantidad": 25, "unidad": "kg", "fecha": "2026-10-01" }` (`fecha` opcional: hoy). Responde `201` |
 | PUT    | `/api/insumos/:id`                                    | Actualizarlo (una compra nueva o una corrección): solo lo que viene (`cantidad` y `unidad`, juntas). Suma una entrada al historial |
+| GET    | `/api/tipos`                                          | Los tipos de producto que armó el dueño (Tortas, Tartas, Alfajores…), por nombre, cada uno con `cantidadProductos` (ver [Tipos](#tipos)) |
+| POST   | `/api/tipos`                                          | Crear un tipo: `{ "nombre": "Tortas" }`. Responde `201`; si ya existe (sin importar mayúsculas ni acentos), `409` |
+| PUT    | `/api/tipos/:id`                                      | Renombrarlo: `{ "nombre": "Tortas heladas" }`. Los productos que lo usan muestran el nombre nuevo |
+| DELETE | `/api/tipos/:id`                                      | Borrarlo: los productos que lo usaban quedan sin tipo (no se borra ninguno). Responde `204` |
 | GET    | `/api/almacenamiento`                                 | Cuánto del plan de Cloudinary está usado (créditos, almacenamiento, ancho de banda y transformaciones) y qué tan cerca está del límite (ver [Almacenamiento](#almacenamiento)) |
 | GET    | `/api/almacenamiento/archivos`                        | Las fotos de productos y las promos, **lo que más ocupa primero**, para elegir qué borrar (`?origen=producto` o `?origen=promo`, `?pagina=1`, `?limite=20`, máx. 100) |
 | GET    | `/api/metricas/productos`                             | Los **productos más vendidos** en un rango de días (`?desde=2026-10-01&hasta=2026-10-31`, los dos opcionales), por unidades o por importe (`?orden=unidades` o `?orden=importe`), paginado (ver [Métricas](#métricas)) |
@@ -108,7 +115,7 @@ Respuesta de `POST /api/carrito`: `{ "items": [{ "productoId", "nombre", "precio
 | GET    | `/api/metricas/insumos`                               | **En qué insumos se gastó más** y **cuánto aumentó cada uno** respecto de la compra anterior |
 | GET    | `/api/metricas/balance`                               | **Lo que entra por ventas, lo que sale en insumos y la ganancia**, con la serie por día, semana o mes (`?agrupar=dia\|semana\|mes`, por defecto `mes`) |
 
-Campos de producto: `nombre` (obligatorio y **único**: no puede haber dos productos con el mismo nombre, sin importar mayúsculas, acentos ni espacios de más; si se repite, `409` "Ya existe un producto con ese nombre: «…»"), `precio` (obligatorio, mayor que 0), `categoria` (obligatoria: el **gusto**, uno de la lista fija), `anticipacionHoras` (obligatoria: con cuántas horas de anticipación hay que encargarlo, entero de 0 a 720; `0` = se puede pedir en el momento. Es informativa: se muestra en el catálogo y el pedido no la controla), `descripcion`, `etiqueta` (texto libre de hasta 30 caracteres para destacarlo en el catálogo, por ejemplo "Nuevo", "Promo lanzamiento" o "El más elegido"), `ingredientes` (JSON `["harina","sal"]` o texto `harina, sal`), `pesoGramos` (mayor que 0), `disponible` (`true` = activo, `false` = pausado) e `imagenes` (hasta 10 archivos por request, solo imágenes, máx. 10 MB cada uno). `descripcion`, `etiqueta` y `pesoGramos` son opcionales: mandarlos vacíos (`null` en JSON o `""`) los borra.
+Campos de producto: `nombre` (obligatorio y **único**: no puede haber dos productos con el mismo nombre, sin importar mayúsculas, acentos ni espacios de más; si se repite, `409` "Ya existe un producto con ese nombre: «…»"), `precio` (obligatorio, mayor que 0), `categoria` (obligatoria: el **gusto**, uno de la lista fija), `anticipacionHoras` (obligatoria: con cuántas horas de anticipación hay que encargarlo, entero de 0 a 720; `0` = se puede pedir en el momento. Es informativa: se muestra en el catálogo y el pedido no la controla), `descripcion`, `etiqueta` (texto libre de hasta 30 caracteres para destacarlo en el catálogo, por ejemplo "Nuevo", "Promo lanzamiento" o "El más elegido"), `ingredientes` (JSON `["harina","sal"]` o texto `harina, sal`), `pesoGramos` (mayor que 0), `tipo` (opcional: el `_id` de uno de los [tipos](#tipos)), `disponible` (`true` = activo, `false` = pausado) e `imagenes` (hasta 10 archivos por request, solo imágenes, máx. 10 MB cada uno). `descripcion`, `etiqueta`, `pesoGramos` y `tipo` son opcionales: mandarlos vacíos (`null` en JSON o `""`) los borra.
 
 ### Promos
 
@@ -130,6 +137,16 @@ Lo que compra el dueño para producir, con lo que pagó, para tener el historial
 - **`logs`** es el historial, dentro del mismo documento: el alta y cada actualización suman una entrada con cómo quedó (`nombre`, `precio`, `fecha`, `cantidad`, `unidad`), qué cambió (`cambios`: `["precio", "fecha", "cantidad"]`) y cuándo se registró (`registradoEn`). La más nueva va primero. Si lo que se manda es igual a lo guardado, no suma entrada.
 - La lista no trae `logs`; el detalle, la respuesta del alta y la de la actualización sí.
 - No hay borrado.
+
+### Tipos
+
+Qué es cada producto (Tortas, Tartas, Alfajores…): una lista que arma el dueño en la app (Más → Tipos). Es privada para editarla, y **opcional** en el producto. No reemplaza a la `categoria`, que sigue siendo el gusto (Dulce, Salado…).
+
+- **Campos:** `nombre` (de 2 a 40 caracteres, **único** sin importar mayúsculas ni acentos; los espacios de más no cuentan).
+- **Respuesta** (la lista, el alta y el renombre): `{ _id, nombre, cantidadProductos, createdAt, updatedAt }`. `cantidadProductos` cuenta los productos que lo usan, activos y pausados: sirve para avisar antes de borrar.
+- **En el producto:** `POST`/`PUT /api/productos` aceptan `"tipo": "<_id>"`; `null` o `""` lo saca. Si el id no tiene formato válido, `400` "El tipo no es válido"; si no existe, `400` "Ese tipo ya no existe: elegí otro".
+- **En las respuestas de productos** (privadas y del catálogo) sale como `"tipo": { "_id": "...", "nombre": "Tortas" }`, o `"tipo": null` si no tiene. El producto guarda solo el id: renombrar el tipo cambia el nombre en todos.
+- **Borrar un tipo** no borra productos: los que lo usaban quedan con `tipo: null`.
 
 ### Almacenamiento
 
@@ -221,6 +238,19 @@ Categorías: son el **gusto** del producto, de una lista fija en `src/models/Pro
 
 Un producto **pausado** (`disponible: false`, por ejemplo el pan dulce fuera de temporada) no sale en el catálogo ni se puede pedir, pero conserva sus datos y sus fotos: se reactiva con `PUT /api/productos/:id` y `{ "disponible": true }`.
 
+### Carta y filtros de la web
+
+La carta llega resuelta del back: el front no agrupa, no filtra ni ordena.
+
+`GET /api/catalogo/secciones` responde `{ "secciones": [{ "tipo": { "_id", "nombre" } | null, "productos": [ … ] }], "totalProductos": 23 }`:
+
+- Solo productos activos, sin paginar. Cada producto tiene la misma forma que un ítem de `GET /api/catalogo` (con `portada`, `cantidadImagenes` y `tipo`).
+- Las secciones van por el nombre del tipo, sin importar mayúsculas ni acentos. Los productos sin tipo van juntos en una sola sección con `"tipo": null`, siempre al final. No hay secciones vacías.
+- Dentro de cada sección, los productos van por gusto (en el orden de la lista fija) y por nombre.
+- Los filtros son los mismos que los de `GET /api/catalogo`, con los mismos errores: `tipo` sin formato de id o `categoria` fuera de la lista dan `400`. Con `?tipo=` sale una sola sección; si no coincide nada (o el tipo no existe), `"secciones": []`.
+
+`GET /api/catalogo/filtros` responde `{ "tipos": [{ "_id", "nombre", "cantidad" }], "categorias": [{ "nombre", "cantidad" }] }`. `cantidad` son los productos activos, sin aplicar filtros. Solo salen los tipos y gustos con al menos uno. `tipos` va por nombre y `categorias` en el orden de la lista fija. `GET /api/catalogo/categorias` sigue trayendo todos los gustos, también los que están en `0`: lo usa el formulario del producto.
+
 ### Recomendaciones
 
 Cualquiera puede dejar una recomendación desde la web, sin login, con `POST /api/catalogo/:id/recomendaciones`:
@@ -247,6 +277,7 @@ Se guardan **dentro del producto**, de la más nueva a la más vieja, y se conse
 | `limite`    | Productos por página (por defecto 20, máx. 100)                                                             |
 | `buscar`    | Una parte del nombre, sin importar mayúsculas ni acentos (`sandwich` encuentra "Sándwich de miga")          |
 | `categoria` | Un gusto de la lista fija. Si no es de la lista: `400`                                                      |
+| `tipo`      | El `_id` de un [tipo](#tipos). Si no tiene formato de id: `400`                                              |
 | `estado`    | Solo en `/api/productos`: `activo` o `pausado` (si no, `400`). El catálogo siempre muestra solo los activos |
 
 Vienen ordenados como la lista de gustos (Dulce, Salado, …) y por nombre dentro de cada uno.

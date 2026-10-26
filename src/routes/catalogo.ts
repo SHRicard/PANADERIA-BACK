@@ -15,7 +15,10 @@ const limitarRecomendaciones = rateLimit({
 });
 
 router.get('/', catalogoController.listar);
-router.get('/categorias', catalogoController.categorias); // antes de /:id, si no la toma como un id
+// Antes de /:id, si no las toma como un id
+router.get('/categorias', catalogoController.categorias);
+router.get('/secciones', catalogoController.secciones);
+router.get('/filtros', catalogoController.opcionesDeFiltros);
 router.get('/:id', catalogoController.detalle);
 // Parser propio con límite chico. Funciona porque index.ts monta este router antes del express.json() global
 router.post(
