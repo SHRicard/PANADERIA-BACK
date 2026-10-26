@@ -45,7 +45,7 @@ function pedidosDelRango({ desde, hasta }: RangoDias): PipelineStage[] {
 }
 
 // Las ventas: los pedidos del rango que no se cancelaron (pendientes, confirmados y entregados)
-const ventasDelRango = (rango: RangoDias): PipelineStage[] => [
+export const ventasDelRango = (rango: RangoDias): PipelineStage[] => [
   { $match: { estado: { $ne: 'cancelado' } } },
   ...pedidosDelRango(rango),
 ];

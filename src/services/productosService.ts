@@ -11,6 +11,7 @@ import {
   Producto,
   SIN_MAYUSCULAS_NI_ACENTOS,
 } from '../models/Producto';
+import { Tipo } from '../models/Tipo';
 import { ErrorHttp } from '../utils/errores';
 import { Paginado } from '../utils/paginado';
 import { regexSinAcentos } from '../utils/texto';
@@ -22,6 +23,9 @@ export type DatosProducto = Partial<
 >;
 
 export type DatosRecomendacion = Omit<IRecomendacion, 'createdAt'>;
+
+// Todas las respuestas traen el tipo como { _id, nombre }: el producto guarda solo el id. Si lo borraron, sale null
+const CON_TIPO = { path: 'tipo', select: 'nombre' };
 
 function borrarImagenes(imagenes: IImagen[]) {
   return Promise.all(imagenes.map((imagen) => borrarDeCloudinary(imagen.publicId)));
@@ -64,6 +68,12 @@ function nombreRepetido(otro?: { nombre: string; disponible: boolean }) {
   return new ErrorHttp(409, `Ya existe un producto con ese nombre: «${otro.nombre}».${pausado}`);
 }
 
+// También antes de subir fotos. Si lo borran justo después, el producto queda apuntando a un tipo que no existe
+// y sale como sin tipo (null): no traba nada
+async function revisarTipo(tipo: Types.ObjectId | null | undefined) {
+  if (tipo && !(await Tipo.exists({ _id: tipo }))) throw new ErrorHttp(400, 'Ese tipo ya no existe: elegí otro');
+}
+
 // Antes de subir fotos, para no gastar la subida. El índice único igual lo frena si dos llegan a la vez
 async function revisarNombreLibre(nombre: string, id?: string) {
   const filtro: Record<string, unknown> = { nombre };
@@ -96,29 +106,39 @@ async function guardarConImagenes(producto: HydratedDocument<IProducto>, buffers
     await borrarImagenes(subidas);
     throw esNombreRepetido(e) ? nombreRepetido() : e;
   }
-  return producto;
+  return producto.populate(CON_TIPO);
 }
 
 export interface FiltrosProductos {
   /** Una parte del nombre, sin importar mayúsculas ni acentos */
   buscar?: string;
   categoria?: Categoria;
+  tipo?: Types.ObjectId;
   /** true = activos, false = pausados */
   disponible?: boolean;
 }
 
-// Una página, ordenada como la lista de categorías (Panes, Facturas…) y por nombre dentro de cada una.
-// Va el _id al final para que el orden no cambie entre páginas cuando dos se llaman igual
-export async function listar({ buscar, categoria, disponible }: FiltrosProductos, { pagina, limite }: Paginado) {
+function filtroDe({ buscar, categoria, tipo, disponible }: FiltrosProductos) {
   const filtro: Record<string, unknown> = {};
   if (buscar) filtro.nombre = regexSinAcentos(buscar);
   if (categoria) filtro.categoria = categoria;
+  if (tipo) filtro.tipo = tipo;
   if (disponible !== undefined) filtro.disponible = disponible;
+  return filtro;
+}
+
+// El orden de las listas: como la lista de gustos (Dulce, Salado…) y por nombre dentro de cada uno
+const ORDEN_CATEGORIA = { $indexOfArray: [CATEGORIAS, '$categoria'] };
+
+// Una página, ordenada como la lista de gustos y por nombre dentro de cada uno.
+// Va el _id al final para que el orden no cambie entre páginas cuando dos se llaman igual
+export async function listar(filtros: FiltrosProductos, { pagina, limite }: Paginado) {
+  const filtro = filtroDe(filtros);
 
   const [encontrados, totalProductos] = await Promise.all([
     Producto.aggregate<IProducto>([
       { $match: filtro },
-      { $addFields: { ordenCategoria: { $indexOfArray: [CATEGORIAS, '$categoria'] } } },
+      { $addFields: { ordenCategoria: ORDEN_CATEGORIA } },
       { $sort: { ordenCategoria: 1, nombre: 1, _id: 1 } },
       { $skip: (pagina - 1) * limite },
       { $limit: limite },
@@ -127,15 +147,68 @@ export async function listar({ buscar, categoria, disponible }: FiltrosProductos
     ]).collation(SIN_MAYUSCULAS_NI_ACENTOS), // "árbol" junto a "Arroz", no después de la Z
     Producto.countDocuments(filtro),
   ]);
+  // hydrate: para que cada foto salga con el toJSON del esquema ({ id, url, miniatura }).
+  // Con la proyección no le pone "recomendaciones: []" por defecto, que haría parecer que no tiene
+  const productos = encontrados.map((producto) => Producto.hydrate(producto, { recomendaciones: 0 }));
+  // Los tipos de toda la página, en una sola consulta
+  await Producto.populate(productos, CON_TIPO);
   return {
-    // hydrate: para que cada foto salga con el toJSON del esquema ({ id, url, miniatura }).
-    // Con la proyección no le pone "recomendaciones: []" por defecto, que haría parecer que no tiene
-    productos: encontrados.map((producto) => Producto.hydrate(producto, { recomendaciones: 0 })),
+    productos,
     pagina,
     limite,
     totalProductos,
     totalPaginas: Math.ceil(totalProductos / limite),
   };
+}
+
+export interface TipoDeSeccion {
+  _id: Types.ObjectId;
+  nombre: string;
+}
+
+export interface Seccion {
+  /** null = los productos sin tipo */
+  tipo: TipoDeSeccion | null;
+  productos: HydratedDocument<IProducto>[];
+}
+
+// La carta de la web: todos los que coinciden, sin paginar, agrupados por tipo. Es UNA consulta: el $lookup trae el
+// tipo de cada producto y Mongo los ordena por su nombre (con la collation, como GET /api/tipos), los sin tipo al
+// final, y dentro de cada tipo como listar. Acá solo se cortan en secciones
+export async function listarSecciones(filtros: FiltrosProductos): Promise<Seccion[]> {
+  const encontrados = await Producto.aggregate<Omit<IProducto, 'tipo'> & { tipo: TipoDeSeccion | null }>([
+    { $match: filtroDe(filtros) },
+    {
+      $lookup: {
+        from: Tipo.collection.name,
+        localField: 'tipo',
+        foreignField: '_id',
+        pipeline: [{ $project: { nombre: 1 } }],
+        as: 'tipo',
+      },
+    },
+    // Si el tipo ya no existe (lo borraron y el producto todavía tiene el id), va con los sin tipo
+    { $set: { tipo: { $ifNull: [{ $first: '$tipo' }, null] }, ordenCategoria: ORDEN_CATEGORIA } },
+    { $set: { sinTipo: { $eq: ['$tipo', null] } } },
+    { $sort: { sinTipo: 1, 'tipo.nombre': 1, 'tipo._id': 1, ordenCategoria: 1, nombre: 1, _id: 1 } },
+    { $project: { sinTipo: 0, ordenCategoria: 0, 'imagenes.publicId': 0, recomendaciones: 0 } },
+  ]).collation(SIN_MAYUSCULAS_NI_ACENTOS);
+
+  const secciones: Seccion[] = [];
+  let tipoActual: string | undefined;
+  for (const encontrado of encontrados) {
+    // Vienen ordenados por tipo: cada vez que cambia, empieza otra sección
+    const tipo = encontrado.tipo ? String(encontrado.tipo._id) : '';
+    if (tipo !== tipoActual) {
+      secciones.push({ tipo: encontrado.tipo, productos: [] });
+      tipoActual = tipo;
+    }
+    // hydratedPopulatedDocs: el tipo que trajo el $lookup sale como si estuviera populado ({ _id, nombre })
+    secciones[secciones.length - 1].productos.push(
+      Producto.hydrate(encontrado, { recomendaciones: 0 }, { hydratedPopulatedDocs: true })
+    );
+  }
+  return secciones;
 }
 
 // Todas las categorías, en orden, con cuántos productos activos tiene cada una
@@ -148,22 +221,41 @@ export async function contarPorCategoria() {
   return CATEGORIAS.map((nombre) => ({ nombre, cantidad: cantidades.get(nombre) ?? 0 }));
 }
 
+// Las opciones de los filtros de la web: los tipos y los gustos con al menos un producto activo, con cuántos tiene
+// cada uno. Sin aplicar filtros, así al elegir uno los demás siguen apareciendo
+export async function opcionesDeFiltros() {
+  const [tipos, categorias] = await Promise.all([
+    Producto.aggregate<TipoDeSeccion & { cantidad: number }>([
+      { $match: { disponible: true, tipo: { $ne: null } } },
+      { $group: { _id: '$tipo', cantidad: { $sum: 1 } } },
+      { $lookup: { from: Tipo.collection.name, localField: '_id', foreignField: '_id', as: 'tipo' } },
+      // Un tipo que ya no existe (algún producto todavía con su id) no sale
+      { $unwind: '$tipo' },
+      { $project: { nombre: '$tipo.nombre', cantidad: 1 } },
+      { $sort: { nombre: 1, _id: 1 } },
+    ]).collation(SIN_MAYUSCULAS_NI_ACENTOS),
+    contarPorCategoria(),
+  ]);
+  return { tipos, categorias: categorias.filter(({ cantidad }) => cantidad > 0) };
+}
+
 // El dueño ve el producto aunque esté pausado (el catálogo público no)
 export async function obtener(id: string) {
-  const producto = await Producto.findById(id);
+  const producto = await Producto.findById(id).populate(CON_TIPO);
   if (!producto) throw new ErrorHttp(404, 'No encontrado');
   return producto;
 }
 
 // Para el catálogo público: solo si está activo
 export async function obtenerDisponible(id: string) {
-  const producto = await Producto.findOne({ _id: id, disponible: true }).select('-imagenes.publicId');
+  const producto = await Producto.findOne({ _id: id, disponible: true }).select('-imagenes.publicId').populate(CON_TIPO);
   if (!producto) throw new ErrorHttp(404, 'No encontrado');
   return producto;
 }
 
 export async function crear(datos: DatosProducto, imagenes: Buffer[]) {
   if (datos.nombre) await revisarNombreLibre(datos.nombre);
+  await revisarTipo(datos.tipo);
   return guardarConImagenes(new Producto(datos), imagenes);
 }
 
@@ -180,6 +272,7 @@ export async function editar(id: string, datos: DatosProducto, imagenesNuevas: B
   }
 
   if (datos.nombre) await revisarNombreLibre(datos.nombre, id);
+  await revisarTipo(datos.tipo);
   producto.set(datos);
   return guardarConImagenes(producto, imagenesNuevas);
 }
@@ -225,7 +318,7 @@ export async function hacerPortada(id: string, imagenId: string) {
     ],
     // El pipeline (array) va directo a Mongo: por eso el id se convierte a mano arriba
     { returnDocument: 'after', updatePipeline: true }
-  );
+  ).populate(CON_TIPO);
   if (!producto) throw new ErrorHttp(404, 'No encontrado');
   return producto;
 }

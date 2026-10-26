@@ -13,13 +13,31 @@ function resumen(producto: HydratedDocument<IProducto>) {
   return { ...datos, portada: portada ? urlMiniatura(portada.url) : null, cantidadImagenes: producto.imagenes.length };
 }
 
-// GET /api/catalogo?buscar=&categoria=&pagina=1&limite=20  (solo los activos)
+// GET /api/catalogo?buscar=&categoria=&tipo=&pagina=1&limite=20  (solo los activos)
 export async function listar(req: Request, res: Response) {
   const filtros = leerFiltros(req.query);
   if (typeof filtros === 'string') return res.status(400).json({ error: filtros });
 
   const pagina = await productosService.listar({ ...filtros, disponible: true }, leerPaginado(req.query));
   res.json({ ...pagina, productos: pagina.productos.map(resumen) });
+}
+
+// GET /api/catalogo/secciones?tipo=&categoria=&buscar=  (la carta: todos los activos que coinciden, sin paginar,
+// agrupados por tipo; los sin tipo van al final, con "tipo": null)
+export async function secciones(req: Request, res: Response) {
+  const filtros = leerFiltros(req.query);
+  if (typeof filtros === 'string') return res.status(400).json({ error: filtros });
+
+  const grupos = await productosService.listarSecciones({ ...filtros, disponible: true });
+  res.json({
+    secciones: grupos.map(({ tipo, productos }) => ({ tipo, productos: productos.map(resumen) })),
+    totalProductos: grupos.reduce((total, { productos }) => total + productos.length, 0),
+  });
+}
+
+// GET /api/catalogo/filtros  (los tipos y los gustos que tienen productos activos, con cuántos tiene cada uno)
+export async function opcionesDeFiltros(_req: Request, res: Response) {
+  res.json(await productosService.opcionesDeFiltros());
 }
 
 // GET /api/catalogo/categorias  (las de la lista fija, en orden, con cuántos productos activos tiene cada una)

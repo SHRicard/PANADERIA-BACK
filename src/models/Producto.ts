@@ -1,4 +1,4 @@
-import { Schema, model } from 'mongoose';
+import { Schema, Types, model } from 'mongoose';
 import { urlMiniatura, urlOptimizada } from '../utils/cloudinaryUrl';
 import { sinAcentos } from '../utils/texto';
 
@@ -60,6 +60,8 @@ export interface IProducto {
   pesoGramos?: number;
   precio: number;
   categoria: Categoria;
+  /** Qué es (Tortas, Tartas…), de los que arma el dueño. Opcional: null si no tiene */
+  tipo: Types.ObjectId | null;
   /** Cuántas horas antes hay que encargarlo; 0 = se puede pedir en el momento. Informativa: el pedido no la controla */
   anticipacionHoras: number;
   /** false = pausado (por ejemplo, el pan dulce fuera de temporada): no sale en el catálogo ni se puede pedir */
@@ -140,6 +142,8 @@ const productoSchema = new Schema<IProducto>(
       required: [true, 'La categoría es obligatoria'],
       enum: { values: CATEGORIAS, message: CATEGORIA_INVALIDA },
     },
+    // Opcional. Con default null, los productos de antes (que no lo tienen) también salen con "tipo": null
+    tipo: { type: Schema.Types.ObjectId, ref: 'Tipo', default: null },
     // Sin valor por defecto: la elige el dueño al crearlo. Los cargados antes se completaron con npm run migrar-anticipacion
     anticipacionHoras: {
       type: Number,

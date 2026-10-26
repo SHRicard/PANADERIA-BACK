@@ -10,7 +10,10 @@ import { IProducto, Producto, SIN_MAYUSCULAS_NI_ACENTOS } from '../models/Produc
 // porque al eliminarlo se borran sus fotos de Cloudinary. Si un nombre ya existe, lo saltea: se puede
 // correr más de una vez sin duplicar nada
 
-type Semilla = Omit<IProducto, 'imagenes' | 'recomendaciones' | 'puntajePromedio' | 'cantidadRecomendaciones'> & { fotos: number };
+// Sin tipo: los tipos los arma el dueño en cada base
+type Semilla = Omit<IProducto, 'tipo' | 'imagenes' | 'recomendaciones' | 'puntajePromedio' | 'cantidadRecomendaciones'> & {
+  fotos: number;
+};
 
 // Variados a propósito: todos los gustos, uno con 10 fotos (el máximo), uno sin fotos, uno pausado,
 // con y sin descripción ni peso, y uno sin anticipación (se pide en el momento)
