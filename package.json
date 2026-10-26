@@ -11,7 +11,8 @@
     "crear-admin": "tsx src/scripts/crearAdmin.ts",
     "subir-marca": "tsx src/scripts/subirMarca.ts",
     "sembrar": "tsx src/scripts/sembrarProductos.ts",
-    "migrar-anticipacion": "tsx src/scripts/migrarAnticipacion.ts"
+    "migrar-anticipacion": "tsx src/scripts/migrarAnticipacion.ts",
+    "sembrar-pedidos": "tsx src/scripts/sembrarPedidos.ts"
   },
   "keywords": [],
   "author": "",
