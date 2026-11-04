@@ -31,5 +31,8 @@ router.put('/:id/entrega', requiereAdmin, pedidosController.registrarEntrega);
 router.delete('/:id/entrega', requiereAdmin, pedidosController.quitarEntrega);
 router.put('/:id/cancelacion', requiereAdmin, pedidosController.cancelar);
 router.delete('/:id/cancelacion', requiereAdmin, pedidosController.quitarCancelacion);
+// Si el dueño ya lo vio: no es un paso del pedido (no cambia el estado), pero se marca y se deshace igual
+router.put('/:id/visto', requiereAdmin, pedidosController.marcarVisto);
+router.delete('/:id/visto', requiereAdmin, pedidosController.quitarVisto);
 
 export default router;

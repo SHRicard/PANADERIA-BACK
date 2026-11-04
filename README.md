@@ -94,6 +94,8 @@ Respuesta de `POST /api/carrito`: `{ "items": [{ "productoId", "nombre", "precio
 | DELETE | `/api/pedidos/:id/entrega`                            | Deshacer la entrega: vuelve a `confirmado` si tiene seña, si no a `pendiente`. Responde el detalle                                                                                                                              |
 | PUT    | `/api/pedidos/:id/cancelacion`                        | Cancelar el pedido (la seña, si tenía, queda registrada). Responde el detalle                                                                                                                                                   |
 | DELETE | `/api/pedidos/:id/cancelacion`                        | Deshacer la cancelación: vuelve a `confirmado` o `pendiente`. Responde el detalle                                                                                                                                               |
+| PUT    | `/api/pedidos/:id/visto`                              | Marcar que el dueño ya lo vio: deja de salir como nuevo. No cambia el estado ni `updatedAt`. Marcarlo otra vez no es un error. Responde el detalle |
+| DELETE | `/api/pedidos/:id/visto`                              | Volver a marcarlo como nuevo (por si tocó sin querer). Responde el detalle |
 | GET    | `/api/clientes`                                       | Clientes con su cantidad de pedidos y la fecha del último                                                                                                                                                                       |
 | GET    | `/api/clientes/:id`                                   | Un cliente con sus últimos 20 pedidos                                                                                                                                                                                           |
 | PATCH  | `/api/ajustes`                                        | Cambiar los ajustes de la web: `{ "estiloCatalogo": "vidriera" \| "carta" }`. Solo cambia lo que viene; un valor fuera de la lista da `400`. Responde los ajustes completos                                                     |
@@ -102,7 +104,13 @@ Respuesta de `POST /api/carrito`: `{ "items": [{ "productoId", "nombre", "precio
 | GET    | `/api/insumos`                                        | Los insumos (harina, manteca…), por nombre, con el precio y la fecha de la última compra. Sin el historial |
 | GET    | `/api/insumos/:id`                                    | Un insumo con su historial (`logs`), la entrada más nueva primero |
 | POST   | `/api/insumos`                                        | Cargar un insumo: `{ "nombre": "Harina", "precio": 25000, "cantidad": 25, "unidad": "kg", "fecha": "2026-10-01" }` (`fecha` opcional: hoy). Responde `201` |
-| PUT    | `/api/insumos/:id`                                    | Actualizarlo (una compra nueva o una corrección): solo lo que viene (`cantidad` y `unidad`, juntas). Suma una entrada al historial |
+| PUT    | `/api/insumos/:id`                                    | Actualizarlo (una compra nueva o una corrección): solo lo que viene (`cantidad` y `unidad`, juntas). Suma una entrada al historial. Si una receta lo usa, no se le puede cambiar la unidad (`409`, ver [Recetas](#recetas)) |
+| GET    | `/api/recetas`                                        | Las recetas, por nombre del producto, con su `rinde`, `costoTotal` y `costoPorUnidad` (sin los ingredientes) (ver [Recetas](#recetas)) |
+| GET    | `/api/recetas/:productoId`                            | La receta de un producto, con lo que cuesta cada ingrediente con el último precio de su insumo. `404` si todavía no tiene |
+| GET    | `/api/recetas/:productoId/produccion?unidades=24`     | Cuánto hace falta de cada ingrediente para hacer esas unidades, y lo que cuesta. Solo calcula, no guarda nada (ver [Hacer la receta](#hacer-la-receta)) |
+| PUT    | `/api/recetas/:productoId`                            | Cargar o reemplazar la receta entera: `{ "rinde": 50, "ingredientes": [{ "insumo": "<_id>", "cantidad": 1000 }, { "nombre": "Agua", "unidad": "g", "cantidad": 200 }] }`. Responde la receta |
+| PUT    | `/api/recetas/:productoId/precio`                     | Ponerle al producto el precio de venta que sale de la receta: `{ "multiplicador": 3, "redondeo": 100 }` → precio = `costoPorUnidad × 3`, al peso o, con `redondeo`, al múltiplo de arriba. Responde la receta (ver [Precio desde la receta](#precio-desde-la-receta)) |
+| DELETE | `/api/recetas/:productoId`                            | Borrar la receta (el producto no se toca). Responde `204` (`404` si no tenía) |
 | GET    | `/api/tipos`                                          | Los tipos de producto que armó el dueño (Tortas, Tartas, Alfajores…), por nombre, cada uno con `cantidadProductos` (ver [Tipos](#tipos)) |
 | POST   | `/api/tipos`                                          | Crear un tipo: `{ "nombre": "Tortas" }`. Responde `201`; si ya existe (sin importar mayúsculas ni acentos), `409` |
 | PUT    | `/api/tipos/:id`                                      | Renombrarlo: `{ "nombre": "Tortas heladas" }`. Los productos que lo usan muestran el nombre nuevo |
@@ -138,7 +146,78 @@ Lo que compra el dueño para producir, con lo que pagó, para tener el historial
 - **Cada compra nueva se carga como una actualización** del mismo insumo, por ejemplo `PUT /api/insumos/:id` con `{ "precio": 54000, "fecha": "2026-10-15" }`. Crear otro con el mismo nombre da `409`.
 - **`logs`** es el historial, dentro del mismo documento: el alta y cada actualización suman una entrada con cómo quedó (`nombre`, `precio`, `fecha`, `cantidad`, `unidad`), qué cambió (`cambios`: `["precio", "fecha", "cantidad"]`) y cuándo se registró (`registradoEn`). La más nueva va primero. Si lo que se manda es igual a lo guardado, no suma entrada.
 - La lista no trae `logs`; el detalle, la respuesta del alta y la de la actualización sí.
+- **Unidad bloqueada si una receta lo usa:** las cantidades de la receta están en gramos o en unidades según la unidad del insumo, así que mientras alguna receta lo use, pasarlo de `unidad` a `kg`/`l` (o al revés) da `409` "No se puede cambiar la unidad de «Huevos»: lo usa la receta de Chipá. Sacalo de esa receta primero". Entre `kg` y `l` sí se puede (en la receta los dos van en gramos). Si ninguna receta lo usa, se corrige como siempre.
 - No hay borrado.
+
+### Recetas
+
+Con qué insumos se hace cada producto y cuántas unidades salen, para saber **lo que cuesta hacer cada unidad**. Es privada (solo la ve el dueño en la app) y no es `ingredientes` del producto: esa es la lista de nombres que sale en el catálogo y no cambia.
+
+- **Una receta por producto**, guardada por el id del producto: `rinde` (cuántas **unidades** salen, entero de 1 a 10000: 1 kg de masa = 50 chipás) e `ingredientes` (de 1 a 50).
+- **Cada ingrediente es un insumo** (`{ "insumo": "<_id>", "cantidad": 1000 }`) **o algo que no se compra**, como el agua (`{ "nombre": "Agua", "unidad": "g", "cantidad": 200 }`, nombre de 2 a 60 caracteres, `unidad` `g` o `unidad`). Lo que no se compra cuesta `0`, pero queda en la receta.
+- **La unidad de un insumo la pone el servidor** según el insumo: `kg` y `l` se cargan en **gramos** (el dueño pesa todo, también los líquidos: 1 l ≈ 1 kg) y `unidad` (los huevos), en **unidades**.
+- **`cantidad` siempre es un entero** de 1 a 100000 (`400` con la posición: "Ingrediente 2: la cantidad tiene que ser un número entero de 1 a 100000").
+- **Errores:** un insumo que no existe, `400` "Uno de los insumos ya no existe: elegí otro"; uno cargado antes sin `cantidad` y `unidad`, `400` "Completá cuánto trae «Harina» (cantidad y unidad) antes de usarlo en una receta"; el mismo insumo o el mismo nombre dos veces (sin importar mayúsculas ni acentos), `400` "«Harina» está dos veces en la receta: sumá las cantidades en uno"; un producto que no existe, `404`.
+- **El costo se calcula cada vez, no se guarda**, con el **último precio** de cada insumo (lo que costaría reponerlo hoy): Harina de 25 kg a $ 25.000 es $ 1 el gramo, así que 1000 g cuestan $ 1.000. Una compra más cara cambia el costo de todas las recetas que usan ese insumo. `costoTotal` es la suma de los costos de los ingredientes (redondeados a centavos) y `costoPorUnidad` es `costoTotal / rinde`.
+- **Respuesta** (el detalle y el `PUT`):
+
+```json
+{
+  "producto": { "_id": "...", "nombre": "Chipá", "precio": 84 },
+  "rinde": 50,
+  "ingredientes": [
+    { "insumo": "...", "nombre": "Harina 0000", "cantidad": 1000, "unidad": "g", "costo": 1000 },
+    { "insumo": "...", "nombre": "Huevos", "cantidad": 2, "unidad": "unidad", "costo": 400 },
+    { "insumo": null, "nombre": "Agua", "cantidad": 200, "unidad": "g", "costo": 0 }
+  ],
+  "costoTotal": 1400,
+  "costoPorUnidad": 28,
+  "multiplicador": 3,
+  "redondeo": null,
+  "createdAt": "...",
+  "updatedAt": "..."
+}
+```
+
+  El `nombre` de un insumo sale del insumo: renombrarlo cambia todas las recetas. `costo` (y con él `costoTotal` y `costoPorUnidad`) es `null` solo si no se puede calcular, lo que hoy no pasa (los insumos no se borran y su unidad no cambia mientras una receta los use). La lista trae lo mismo sin `ingredientes` y con `cantidadIngredientes`. `producto.precio` es el precio de venta de hoy (para compararlo con `costoPorUnidad`) `multiplicador`, el último con el que se le puso el precio desde la receta (`null` si nunca), y `redondeo`, el que usó esa vez (`null` si lo dejó al peso o nunca).
+- **Borrar el producto** borra también su receta.
+
+#### Hacer la receta
+
+`GET /api/recetas/:productoId/produccion?unidades=24` dice **cuánto hace falta de cada ingrediente para hacer esas unidades**: el dueño tiene que hacer 24 chipás y la receta rinde 12, así que es la receta ×2 (1000 g de harina pasan a 2000 g). Solo calcula: no guarda nada ni descuenta insumos.
+
+- `unidades`: cuántas unidades va a hacer, un entero de 1 a 10000 (solo dígitos). Si no viene, `400` "Falta cuántas unidades vas a hacer"; si no sirve (`2.5`, `0`, `10001`), `400` "Las unidades tienen que ser un número entero de 1 a 10000".
+- **Cada cantidad es `cantidad × unidades / rinde`, redondeada para arriba al entero:** si no da justo (30 chipás de una receta de 12 son ×2,5), 3 huevos pasan a 8 y no a 7, porque es mejor que sobre a que falte. Los gramos también quedan enteros. `redondeado` dice en cuáles pasó (`true` en los huevos: 7,5 → 8).
+- `veces` es cuántas veces la receta (`unidades / rinde`, con dos decimales: 24 de 12 da `2`, 25 de 12 da `2.08`).
+- `costo` de cada ingrediente y `costoTotal` son los de esas cantidades, con el último precio de cada insumo (como en la receta). `null` si alguno no se puede calcular.
+
+```json
+{
+  "producto": { "_id": "...", "nombre": "Chipá", "precio": 84 },
+  "rinde": 12,
+  "unidades": 30,
+  "veces": 2.5,
+  "ingredientes": [
+    { "insumo": "...", "nombre": "Harina 0000", "cantidad": 2500, "unidad": "g", "costo": 2500, "redondeado": false },
+    { "insumo": "...", "nombre": "Huevos", "cantidad": 8, "unidad": "unidad", "costo": 1600, "redondeado": true },
+    { "insumo": null, "nombre": "Agua", "cantidad": 500, "unidad": "g", "costo": 0, "redondeado": false }
+  ],
+  "costoTotal": 4100
+}
+```
+
+- **Errores:** sin receta, `404` "Este producto todavía no tiene receta"; un id que no es válido, `404` "No encontrado".
+
+#### Precio desde la receta
+
+`PUT /api/recetas/:productoId/precio` con `{ "multiplicador": 3 }` le pone al producto el precio de venta **lo que cuesta hoy cada unidad × multiplicador**, redondeado al peso: con un costo de $ 28 y ×3, el producto pasa a valer $ 84 (y sale así en el catálogo, enseguida).
+
+- El costo es el de ese momento, con el último precio de cada insumo: cuando aumenta la harina, se vuelve a tocar y el precio sigue al costo nuevo.
+- `multiplicador`: mayor que 1, hasta 10 y con un decimal como mucho (`2.5` sí, `2.25` no). Si no, `400` "El multiplicador tiene que ser mayor que 1 y hasta 10, con un decimal como mucho (por ejemplo, 2,5)"; si no viene, `400` "Falta el multiplicador".
+- `redondeo` (opcional): `10`, `50`, `100`, `500` o `1000`. Lleva el precio al múltiplo **de arriba**: con un costo de $ 5.845,33 y ×2 da $ 11.691, y con `"redondeo": 1000` queda en $ 12.000 (nunca gana menos de lo que eligió). Sin `redondeo` o con `null`, al peso. Otro valor: `400` "El redondeo tiene que ser uno de estos: 10, 50, 100, 500, 1000".
+- Quedan guardados en la receta (`multiplicador` y `redondeo`; sin redondeo, se borra), para que la app los proponga la próxima vez. No le cambia el `updatedAt` a la receta (sí al producto: es una edición del precio).
+- Responde la receta, como el `GET`, con el `producto.precio` nuevo.
+- **Errores:** sin receta, `404` "Este producto todavía no tiene receta"; un ingrediente sin costo calculable, `409` "No se pudo calcular lo que cuesta algún ingrediente: revisá sus insumos"; una receta que da $ 0 (solo cosas que no se compran), `409` "Con lo que cuesta esta receta, el precio da $ 0: ponelo a mano desde Editar producto".
 
 ### Tipos
 
@@ -227,6 +306,7 @@ Lo que ve el dueño al abrir la app (el inicio). Es privado y se calcula al vuel
 - Cada respuesta de pedidos (lista, detalle y acciones) trae **`saldo`**: lo que falta cobrar al entregar (total menos la seña). Se calcula, no se guarda.
 - Si el pedido está en un estado que no permite la acción (por ejemplo, cancelar uno entregado), responde `409` con el motivo. Si dos acciones llegan a la vez, gana una y la otra recibe `409`.
 - Cada pedido trae **`origen`**: `web` (lo hizo el cliente desde la web) o `manual` (lo cargó el dueño). Los pedidos anteriores a este campo salen como `web`.
+- Cada pedido trae **`visto`**: si el dueño ya lo vio en la app. Los de la web nacen en `false` (la app los marca como nuevos) hasta que el dueño abre el detalle y toca «Marcar como visto» (`PUT /api/pedidos/:id/visto`); los manuales nacen en `true` (los cargó él). Los pedidos anteriores a este campo salen como `true`. Las acciones (seña, entrega, cancelación) no lo cambian. `POST /api/pedidos` (público) no lo devuelve.
 
 ### Pedido manual
 

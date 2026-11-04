@@ -38,6 +38,11 @@ export interface IPedido {
   sena?: ISena;
   entregadoEn?: Date;
   canceladoEn?: Date;
+  /**
+   * Si el dueño ya lo vio en la app: los de la web nacen sin ver (es lo que la app le marca como nuevo) y los manuales,
+   * vistos (los cargó él). Los anteriores a este campo no lo tienen: salen como vistos (pedidosService.completar)
+   */
+  visto?: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -89,6 +94,9 @@ const pedidoSchema = new Schema<IPedido>(
     sena: { type: senaSchema },
     entregadoEn: { type: Date },
     canceladoEn: { type: Date },
+    // Sin default a propósito: Mongoose se lo pondría al leer los pedidos de antes, y saldrían todos como nuevos.
+    // Lo pone pedidosService al crear
+    visto: { type: Boolean },
   },
   { timestamps: true }
 );

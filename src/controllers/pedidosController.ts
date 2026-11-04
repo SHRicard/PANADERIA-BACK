@@ -134,3 +134,7 @@ export const quitarEntrega = accion(pedidosService.quitarEntrega);
 export const cancelar = accion(pedidosService.cancelar);
 // DELETE /api/pedidos/:id/cancelacion  (vuelve a confirmado o pendiente)
 export const quitarCancelacion = accion(pedidosService.quitarCancelacion);
+// PUT /api/pedidos/:id/visto  (el dueño ya lo vio: deja de ser nuevo)
+export const marcarVisto = accion((id) => pedidosService.marcarVisto(id, true));
+// DELETE /api/pedidos/:id/visto  (vuelve a nuevo, por si lo marcó sin querer)
+export const quitarVisto = accion((id) => pedidosService.marcarVisto(id, false));
