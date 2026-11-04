@@ -156,6 +156,8 @@ function armarPedido(dia: string, edad: number, ahora: Date, productos: Producto
     total,
     estado,
     origen,
+    // Sin ver, solo los de la web que siguen esperando la seña y son de hoy o de ayer: lo demás el dueño ya lo atendió
+    visto: origen === 'manual' || estado !== 'pendiente' || edad > 1,
     ...(conProbabilidad(0.2) && { nota: alguno(NOTAS) }),
     ...(sena && { sena }),
     ...(entregadoEn && { entregadoEn }),

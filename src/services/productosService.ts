@@ -11,6 +11,7 @@ import {
   Producto,
   SIN_MAYUSCULAS_NI_ACENTOS,
 } from '../models/Producto';
+import { Receta } from '../models/Receta';
 import { Tipo } from '../models/Tipo';
 import { ErrorHttp } from '../utils/errores';
 import { Paginado } from '../utils/paginado';
@@ -326,6 +327,8 @@ export async function hacerPortada(id: string, imagenId: string) {
 export async function borrar(id: string) {
   const producto = await Producto.findByIdAndDelete(id);
   if (!producto) throw new ErrorHttp(404, 'No encontrado');
+  // Su receta no sirve sin el producto
+  await Receta.deleteOne({ producto: producto._id });
   await borrarImagenes(producto.imagenes);
 }
 
