@@ -37,9 +37,17 @@ const senaMayorQueTotal = (total: number) =>
   new ErrorHttp(400, `La seña no puede ser más que el total del pedido ($${total.toLocaleString('es-AR')})`);
 
 // Lo que se agrega al responder: el saldo (lo que falta cobrar al entregar: el total menos la seña, si la pagó),
-// que se calcula y no se guarda, y el origen de los pedidos anteriores a ese campo, que son todos de la web
-export function completar<T extends Pick<IPedido, 'total' | 'sena'> & { origen?: OrigenPedido }>(pedido: T) {
-  return { ...pedido, origen: pedido.origen ?? 'web', saldo: redondear(pedido.total - (pedido.sena?.monto ?? 0)) };
+// que se calcula y no se guarda; el origen de los pedidos anteriores a ese campo, que son todos de la web, y si el
+// dueño lo vio: los anteriores a ese campo, sí (si no, la app los mostraría todos como nuevos)
+export function completar<T extends Pick<IPedido, 'total' | 'sena'> & { origen?: OrigenPedido; visto?: boolean }>(
+  pedido: T
+) {
+  return {
+    ...pedido,
+    origen: pedido.origen ?? 'web',
+    visto: pedido.visto ?? true,
+    saldo: redondear(pedido.total - (pedido.sena?.monto ?? 0)),
+  };
 }
 
 // Una acción no encontró el pedido en un estado que la permita: ¿no existe (404) o está en otro estado (409)?
@@ -59,7 +67,7 @@ async function sinEstado(id: string, mensaje: string) {
 async function guardar(
   { nombre, telefono, nota }: DatosPedido,
   cotizacion: Cotizacion,
-  extra: Pick<IPedido, 'origen'> & Partial<Pick<IPedido, 'estado' | 'sena'>>
+  extra: Pick<IPedido, 'origen'> & { visto: boolean } & Partial<Pick<IPedido, 'estado' | 'sena'>>
 ) {
   const items: IItemPedido[] = cotizacion.items.map((item) => ({
     producto: item.producto,
@@ -91,7 +99,8 @@ async function guardar(
 export async function crear(datos: DatosPedido) {
   const cotizacion = await carritoService.cotizar(datos.cantidades);
   if (cotizacion.noDisponibles.length > 0) return { noDisponibles: cotizacion.noDisponibles };
-  return { pedido: await guardar(datos, cotizacion, { origen: 'web' }) };
+  // Es lo que la app le marca al dueño como nuevo hasta que lo abre y toca «Marcar como visto»
+  return { pedido: await guardar(datos, cotizacion, { origen: 'web', visto: false }) };
 }
 
 // El pedido que carga el dueño (le escribieron por WhatsApp, se lo pidieron en persona): las mismas reglas que el
@@ -102,7 +111,8 @@ export async function crearManual({ montoSena, ...datos }: DatosPedidoManual) {
   if (montoSena !== undefined && montoSena > cotizacion.total) throw senaMayorQueTotal(cotizacion.total);
 
   const conSena = montoSena !== undefined && { estado: 'confirmado' as const, sena: { monto: montoSena, pagadaEn: new Date() } };
-  const pedido = await guardar(datos, cotizacion, { origen: 'manual', ...conSena });
+  // Lo cargó el dueño: ya lo vio
+  const pedido = await guardar(datos, cotizacion, { origen: 'manual', visto: true, ...conSena });
   return { pedido: await obtener(pedido.id) };
 }
 
@@ -229,5 +239,13 @@ export async function quitarCancelacion(id: string) {
     { updatePipeline: true }
   );
   if (!actualizado) throw await sinEstado(id, 'El pedido no está cancelado');
+  return obtener(id);
+}
+
+// Visto lo marca el dueño desde el detalle (y lo desmarca, por si tocó sin querer). No cambia el estado ni updatedAt:
+// verlo no es editarlo. Marcar uno que ya estaba visto no es un error: los dos toques dejan lo mismo
+export async function marcarVisto(id: string, visto: boolean) {
+  const actualizado = await Pedido.findByIdAndUpdate(id, { $set: { visto } }, { timestamps: false });
+  if (!actualizado) throw new ErrorHttp(404, NO_ENCONTRADO);
   return obtener(id);
 }

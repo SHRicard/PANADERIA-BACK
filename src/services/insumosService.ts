@@ -1,7 +1,8 @@
 import { PipelineStage, Types } from 'mongoose';
-import { CAMPOS_INSUMO, IInsumo, Insumo } from '../models/Insumo';
+import { CAMPOS_INSUMO, IInsumo, Insumo, UNIDADES_INSUMO, UnidadInsumo } from '../models/Insumo';
 import { SIN_MAYUSCULAS_NI_ACENTOS } from '../models/Producto';
 import { ErrorHttp } from '../utils/errores';
+import * as recetasService from './recetasService';
 
 export type DatosInsumo = Pick<IInsumo, 'nombre' | 'precio' | 'fecha' | 'cantidad' | 'unidad'>;
 
@@ -17,6 +18,26 @@ async function nombreRepetido(nombre: string) {
   const cual = otro ? `: «${otro.nombre}». Para cargar una compra nueva, actualizá ese` : '';
   return new ErrorHttp(409, `Ya existe un insumo con ese nombre${cual}`);
 }
+
+// "Chipá", "Chipá y Pan casero", "Chipá, Pan casero y Pizza"
+const enLista = (nombres: string[]) =>
+  nombres.length === 1 ? nombres[0] : `${nombres.slice(0, -1).join(', ')} y ${nombres.at(-1)}`;
+
+// El 409 dice qué recetas lo usan, así el dueño sabe de dónde sacarlo
+async function unidadEnUso(id: string, productos: string[]) {
+  const insumo = await Insumo.findById(id).select('nombre').lean();
+  if (!insumo) return new ErrorHttp(404, NO_ENCONTRADO);
+  const recetas =
+    productos.length === 1
+      ? `lo usa la receta de ${productos[0]}. Sacalo de esa receta primero`
+      : `lo usan las recetas de ${enLista(productos)}. Sacalo de esas recetas primero`;
+  return new ErrorHttp(409, `No se puede cambiar la unidad de «${insumo.nombre}»: ${recetas}`);
+}
+
+// Las unidades a las que se puede pasar un insumo que está en alguna receta: las que en la receta se cargan igual
+// (kg y l van los dos en gramos; unidad, en unidades)
+const unidadesCompatibles = (unidad: UnidadInsumo) =>
+  UNIDADES_INSUMO.filter((otra) => recetasService.unidadEnReceta(otra) === recetasService.unidadEnReceta(unidad));
 
 // La lista, sin el historial (va en el detalle), por nombre
 export async function listar() {
@@ -95,14 +116,23 @@ export async function actualizar(id: string, cambios: Partial<DatosInsumo>) {
     },
   ];
 
+  // Mientras una receta lo use, no se le puede cambiar la unidad: sus cantidades están en gramos o en unidades según
+  // esa unidad (1000 g de harina no son 1000 unidades). Si ninguna lo usa, se puede corregir, y un insumo de antes
+  // que no la tiene nunca está en una receta. El cambio va condicionado en el mismo filtro del update
+  const usanElInsumo = cambios.unidad ? await recetasService.productosQueUsan(id) : [];
+  const filtro =
+    cambios.unidad && usanElInsumo.length
+      ? { _id: id, unidad: { $in: unidadesCompatibles(cambios.unidad) } }
+      : { _id: id };
+
   try {
-    const insumo = await Insumo.findOneAndUpdate({ _id: id }, [...pipeline, { $unset: '_cambios' }], {
+    const insumo = await Insumo.findOneAndUpdate(filtro, [...pipeline, { $unset: '_cambios' }], {
       updatePipeline: true,
       returnDocument: 'after',
       // updatedAt lo pone el pipeline: solo si hubo cambios
       timestamps: false,
     });
-    if (!insumo) throw new ErrorHttp(404, NO_ENCONTRADO);
+    if (!insumo) throw usanElInsumo.length ? await unidadEnUso(id, usanElInsumo) : new ErrorHttp(404, NO_ENCONTRADO);
     return insumo;
   } catch (e) {
     throw esNombreRepetido(e) && cambios.nombre ? await nombreRepetido(cambios.nombre) : e;
