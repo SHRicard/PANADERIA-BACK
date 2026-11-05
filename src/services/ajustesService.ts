@@ -1,7 +1,11 @@
 import { AJUSTES_POR_DEFECTO, Ajustes, ID_AJUSTES, IAjustes } from '../models/Ajustes';
 
 // Solo los ajustes: sin _id, __v ni fechas
-const datos = (ajustes: IAjustes): IAjustes => ({ estiloCatalogo: ajustes.estiloCatalogo });
+const datos = ({ estiloCatalogo, cerrado, mensajeCerrado }: IAjustes): IAjustes => ({
+  estiloCatalogo,
+  cerrado,
+  mensajeCerrado,
+});
 
 export async function obtener(): Promise<IAjustes> {
   const ajustes = await Ajustes.findById(ID_AJUSTES);
@@ -16,4 +20,9 @@ export async function actualizar(cambios: Partial<IAjustes>): Promise<IAjustes> 
     { upsert: true, returnDocument: 'after', runValidators: true, setDefaultsOnInsert: true }
   );
   return ajustes ? datos(ajustes) : AJUSTES_POR_DEFECTO;
+}
+
+// Si el dueño cerró el negocio por un tiempo: la web no toma pedidos
+export async function estaCerrado(): Promise<boolean> {
+  return (await obtener()).cerrado;
 }
