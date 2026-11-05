@@ -3,6 +3,7 @@ import { Cliente, ICliente } from '../models/Cliente';
 import { EstadoPedido, IItemPedido, IPedido, OrigenPedido, Pedido } from '../models/Pedido';
 import { ErrorHttp } from '../utils/errores';
 import { Paginado } from '../utils/paginado';
+import * as ajustesService from './ajustesService';
 import * as carritoService from './carritoService';
 
 export interface DatosPedido {
@@ -95,8 +96,13 @@ async function guardar(
   });
 }
 
-// El pedido del cliente desde la web. Si hay productos pausados o eliminados no lo crea: devuelve cuáles son
+// Lo que lee el cliente si manda el pedido con el negocio cerrado (tenía la web abierta de antes)
+export const NEGOCIO_CERRADO = 'Por ahora no estamos tomando pedidos. ¡Volvé a mirar en unos días!';
+
+// El pedido del cliente desde la web. Si hay productos pausados o eliminados no lo crea: devuelve cuáles son.
+// Con el negocio cerrado responde 409: la web ya muestra el cartel, pero una pestaña abierta de antes podía mandarlo
 export async function crear(datos: DatosPedido) {
+  if (await ajustesService.estaCerrado()) throw new ErrorHttp(409, NEGOCIO_CERRADO);
   const cotizacion = await carritoService.cotizar(datos.cantidades);
   if (cotizacion.noDisponibles.length > 0) return { noDisponibles: cotizacion.noDisponibles };
   // Es lo que la app le marca al dueño como nuevo hasta que lo abre y toca «Marcar como visto»
