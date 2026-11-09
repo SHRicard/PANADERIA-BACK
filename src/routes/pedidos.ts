@@ -23,6 +23,8 @@ router.post('/manuales', requiereAdmin, leerJson, pedidosController.crearManual)
 
 router.get('/', requiereAdmin, pedidosController.listar);
 router.get('/:id', requiereAdmin, pedidosController.detalle);
+// El cliente pidió sumar, sacar o cambiar algo: la app manda la lista completa de productos (solo pedidos abiertos)
+router.put('/:id/items', requiereAdmin, leerJson, pedidosController.editarItems);
 
 // Cada paso del pedido: PUT lo registra y DELETE lo deshace (por si el dueño tocó por error)
 router.put('/:id/sena', requiereAdmin, leerJson, pedidosController.registrarSena);
@@ -34,5 +36,8 @@ router.delete('/:id/cancelacion', requiereAdmin, pedidosController.quitarCancela
 // Si el dueño ya lo vio: no es un paso del pedido (no cambia el estado), pero se marca y se deshace igual
 router.put('/:id/visto', requiereAdmin, pedidosController.marcarVisto);
 router.delete('/:id/visto', requiereAdmin, pedidosController.quitarVisto);
+// Con envío (PUT) o lo pasa a retirar (DELETE): el cliente cambió de idea. Solo pedidos abiertos
+router.put('/:id/envio', requiereAdmin, pedidosController.marcarEnvio);
+router.delete('/:id/envio', requiereAdmin, pedidosController.quitarEnvio);
 
 export default router;
