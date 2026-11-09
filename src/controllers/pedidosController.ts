@@ -14,6 +14,8 @@ function esEstado(valor: unknown): valor is EstadoPedido {
   return typeof valor === 'string' && (ESTADOS_PEDIDO as readonly string[]).includes(valor);
 }
 
+const ITEMS_FUERA_DE_RANGO = 'El pedido tiene que tener entre 1 y 30 productos';
+
 // Devuelve los datos listos para el servicio, o el mensaje de error
 function leerPedido(body: unknown): pedidosService.DatosPedido | string {
   if (!esObjeto(body) || !esObjeto(body.cliente)) return 'Faltan los datos del cliente';
@@ -32,14 +34,18 @@ function leerPedido(body: unknown): pedidosService.DatosPedido | string {
     nota = body.nota.trim() || undefined;
   }
 
+  // Opcional: sin el campo (o null), lo pasa a retirar. Así la web de antes sigue pudiendo mandar pedidos
+  const conEnvio = body.conEnvio ?? false;
+  if (typeof conEnvio !== 'boolean') return 'conEnvio tiene que ser true (con envío) o false (lo pasa a retirar)';
+
   // Los productos repetidos se juntan en un solo item sumando las cantidades (las mismas reglas que el carrito)
-  const cantidades = leerItems(body.items, { minimo: 1, fueraDeRango: 'El pedido tiene que tener entre 1 y 30 productos' });
+  const cantidades = leerItems(body.items, { minimo: 1, fueraDeRango: ITEMS_FUERA_DE_RANGO });
   if (typeof cantidades === 'string') return cantidades;
 
-  return { nombre, telefono, cantidades, nota };
+  return { nombre, telefono, cantidades, nota, conEnvio };
 }
 
-// POST /api/pedidos  { cliente: { nombre, telefono }, items: [{ productoId, cantidad }], nota? }  (pública)
+// POST /api/pedidos  { cliente: { nombre, telefono }, items: [{ productoId, cantidad }], nota?, conEnvio? }  (pública)
 export async function crear(req: Request, res: Response) {
   const datos = leerPedido(req.body);
   if (typeof datos === 'string') return res.status(400).json({ error: datos });
@@ -59,22 +65,24 @@ export async function crear(req: Request, res: Response) {
     items: pedido.items,
     total: pedido.total,
     estado: pedido.estado,
+    conEnvio: pedido.conEnvio,
     createdAt: pedido.createdAt,
   });
 }
 
-const MONTO_SENA_INVALIDO = 'El monto de la seña tiene que ser un número mayor que 0';
+const MONTO_SENA_INVALIDO = 'El monto de la seña tiene que ser un número, 0 o más';
 
+// 0 = el dueño lo confirma sin seña (botón «Sin seña» de la app)
 const esMontoValido = (monto: unknown): monto is number =>
-  typeof monto === 'number' && Number.isFinite(monto) && monto > 0;
+  typeof monto === 'number' && Number.isFinite(monto) && monto >= 0;
 
-// POST /api/pedidos/manuales  { cliente: { nombre, telefono }, items: [{ productoId, cantidad }], nota?, sena?: { monto } }
+// POST /api/pedidos/manuales  { cliente: { nombre, telefono }, items: [{ productoId, cantidad }], nota?, conEnvio?, sena?: { monto } }
 // El dueño carga un pedido que le hicieron por fuera de la web. Responde 201 con el detalle
 export async function crearManual(req: Request, res: Response) {
   const datos = leerPedido(req.body);
   if (typeof datos === 'string') return res.status(400).json({ error: datos });
 
-  // Sin sena (o null): entra pendiente. Con sena: el cliente ya la transfirió y entra confirmado
+  // Sin sena (o null): entra pendiente. Con sena: el cliente ya la transfirió (o 0: sin seña) y entra confirmado
   const sena: unknown = esObjeto(req.body) ? req.body.sena : undefined;
   let montoSena: number | undefined;
   if (sena !== undefined && sena !== null) {
@@ -107,13 +115,32 @@ export async function detalle(req: Request<{ id: string }>, res: Response) {
   res.json(await pedidosService.obtener(req.params.id));
 }
 
-// PUT /api/pedidos/:id/sena  { monto }  Confirma la seña o corrige su monto
+// PUT /api/pedidos/:id/sena  { monto }  Confirma la seña (0 = sin seña) o corrige su monto
 export async function registrarSena(req: Request<{ id: string }>, res: Response) {
   if (!isValidObjectId(req.params.id)) return res.status(404).json({ error: 'No encontrado' });
 
   const monto: unknown = esObjeto(req.body) ? req.body.monto : undefined;
   if (!esMontoValido(monto)) return res.status(400).json({ error: MONTO_SENA_INVALIDO });
   res.json(await pedidosService.registrarSena(req.params.id, Math.round(monto * 100) / 100));
+}
+
+// PUT /api/pedidos/:id/items  { items: [{ productoId, cantidad }] }
+// La lista completa de productos (suma, saca o cambia cantidades): reemplaza la del pedido. Responde el detalle
+export async function editarItems(req: Request<{ id: string }>, res: Response) {
+  if (!isValidObjectId(req.params.id)) return res.status(404).json({ error: 'No encontrado' });
+
+  const items: unknown = esObjeto(req.body) ? req.body.items : undefined;
+  const cantidades = leerItems(items, { minimo: 1, fueraDeRango: ITEMS_FUERA_DE_RANGO });
+  if (typeof cantidades === 'string') return res.status(400).json({ error: cantidades });
+
+  const resultado = await pedidosService.editarItems(req.params.id, cantidades);
+  if (resultado.noDisponibles) {
+    return res.status(400).json({
+      error: 'Hay productos que no existen',
+      productosNoDisponibles: resultado.noDisponibles,
+    });
+  }
+  res.json(resultado.pedido);
 }
 
 // Las demás acciones no llevan body: el id y el método alcanzan
@@ -138,3 +165,7 @@ export const quitarCancelacion = accion(pedidosService.quitarCancelacion);
 export const marcarVisto = accion((id) => pedidosService.marcarVisto(id, true));
 // DELETE /api/pedidos/:id/visto  (vuelve a nuevo, por si lo marcó sin querer)
 export const quitarVisto = accion((id) => pedidosService.marcarVisto(id, false));
+// PUT /api/pedidos/:id/envio  (el cliente quiere que se lo manden)
+export const marcarEnvio = accion((id) => pedidosService.cambiarEnvio(id, true));
+// DELETE /api/pedidos/:id/envio  (lo pasa a retirar)
+export const quitarEnvio = accion((id) => pedidosService.cambiarEnvio(id, false));
