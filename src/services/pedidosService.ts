@@ -13,6 +13,8 @@ export interface DatosPedido {
   /** Cantidad por id de producto (leerItems) */
   cantidades: Map<string, number>;
   nota?: string;
+  /** Si quiere que se lo manden. Si no lo dice, lo pasa a retirar */
+  conEnvio: boolean;
 }
 
 /** El pedido que carga el dueño a mano: lo mismo, más la seña si el cliente ya la transfirió */
@@ -27,9 +29,10 @@ const NO_ENCONTRADO = 'No encontrado';
 // Seña, entrega y cancelación solo mientras el pedido sigue abierto
 export const ABIERTOS: EstadoPedido[] = ['pendiente', 'confirmado'];
 
-// Al deshacer una entrega o una cancelación, vuelve a como estaba: confirmado si tiene seña, si no pendiente
+// Al deshacer una entrega o una cancelación, vuelve a como estaba: confirmado si tiene seña, si no pendiente.
+// Mira si existe la seña, no su monto: una de 0 (confirmado sin seña) también vuelve a confirmado
 const VOLVER_A_ABIERTO: PipelineStage.Set = {
-  $set: { estado: { $cond: [{ $gt: ['$sena.monto', 0] }, 'confirmado', 'pendiente'] } },
+  $set: { estado: { $cond: [{ $eq: [{ $type: '$sena' }, 'object'] }, 'confirmado', 'pendiente'] } },
 };
 
 const redondear = (monto: number) => Math.round(monto * 100) / 100;
@@ -39,14 +42,16 @@ const senaMayorQueTotal = (total: number) =>
 
 // Lo que se agrega al responder: el saldo (lo que falta cobrar al entregar: el total menos la seña, si la pagó),
 // que se calcula y no se guarda; el origen de los pedidos anteriores a ese campo, que son todos de la web, y si el
-// dueño lo vio: los anteriores a ese campo, sí (si no, la app los mostraría todos como nuevos)
-export function completar<T extends Pick<IPedido, 'total' | 'sena'> & { origen?: OrigenPedido; visto?: boolean }>(
-  pedido: T
-) {
+// dueño lo vio: los anteriores a ese campo, sí (si no, la app los mostraría todos como nuevos). Y el envío: los
+// anteriores a ese campo son retiro
+export function completar<
+  T extends Pick<IPedido, 'total' | 'sena'> & { origen?: OrigenPedido; visto?: boolean; conEnvio?: boolean },
+>(pedido: T) {
   return {
     ...pedido,
     origen: pedido.origen ?? 'web',
     visto: pedido.visto ?? true,
+    conEnvio: pedido.conEnvio ?? false,
     saldo: redondear(pedido.total - (pedido.sena?.monto ?? 0)),
   };
 }
@@ -66,7 +71,7 @@ async function sinEstado(id: string, mensaje: string) {
 // Lo que comparten el pedido de la web y el manual: el cliente se crea o se actualiza por teléfono, y nombre,
 // precio, categoría y total salen de la cotización (de la base), nunca de lo que mande el front
 async function guardar(
-  { nombre, telefono, nota }: DatosPedido,
+  { nombre, telefono, nota, conEnvio }: DatosPedido,
   cotizacion: Cotizacion,
   extra: Pick<IPedido, 'origen'> & { visto: boolean } & Partial<Pick<IPedido, 'estado' | 'sena'>>
 ) {
@@ -92,6 +97,7 @@ async function guardar(
     items,
     total: cotizacion.total,
     nota,
+    conEnvio,
     ...extra,
   });
 }
@@ -161,12 +167,20 @@ export async function obtener(id: string) {
 // Cada acción es UNA operación condicionada al estado: si dos llegan a la vez (dos toques, la app y la compu),
 // la segunda no pisa a la primera. ❌ No las pases a leer-revisar-guardar.
 
-// Confirma la seña (pasa a confirmado) o corrige su monto. La fecha queda la de la primera confirmación
+// Confirma la seña (pasa a confirmado; 0 = sin seña) o corrige su monto. La fecha queda la de la primera
+// seña mayor que 0: si lo confirmó sin seña y después el cliente transfirió, la fecha es la de la transferencia
 export async function registrarSena(id: string, monto: number) {
   const actualizado = await Pedido.findOneAndUpdate(
     // total >= monto en el mismo filtro: la seña nunca pasa del total
     { _id: id, estado: { $in: ABIERTOS }, total: { $gte: monto } },
-    [{ $set: { estado: 'confirmado', sena: { monto, pagadaEn: { $ifNull: ['$sena.pagadaEn', '$$NOW'] } } } }],
+    [
+      {
+        $set: {
+          estado: 'confirmado',
+          sena: { monto, pagadaEn: { $cond: [{ $gt: ['$sena.monto', 0] }, '$sena.pagadaEn', '$$NOW'] } },
+        },
+      },
+    ],
     { updatePipeline: true }
   );
   if (!actualizado) {
@@ -254,4 +268,75 @@ export async function marcarVisto(id: string, visto: boolean) {
   const actualizado = await Pedido.findByIdAndUpdate(id, { $set: { visto } }, { timestamps: false });
   if (!actualizado) throw new ErrorHttp(404, NO_ENCONTRADO);
   return obtener(id);
+}
+
+// El cliente cambió de idea (le escribió «mejor mandámelo»): solo mientras el pedido sigue abierto, como los
+// productos. Marcar lo que ya estaba no es un error: los dos toques dejan lo mismo
+export async function cambiarEnvio(id: string, conEnvio: boolean) {
+  const actualizado = await Pedido.findOneAndUpdate({ _id: id, estado: { $in: ABIERTOS } }, { $set: { conEnvio } });
+  if (!actualizado) {
+    throw await noSePudo(id, {
+      entregado: 'El pedido ya está entregado: no se puede cambiar el envío',
+      cancelado: 'El pedido está cancelado: no se puede cambiar el envío',
+    });
+  }
+  return obtener(id);
+}
+
+const EDICION_CERRADA: Partial<Record<EstadoPedido, string>> = {
+  entregado: 'El pedido ya está entregado: no se pueden cambiar sus productos',
+  cancelado: 'El pedido está cancelado: no se pueden cambiar sus productos',
+};
+
+// El cliente le escribió al dueño para sumar algo, sacar algo o cambiar cantidades: la app manda la lista completa y
+// reemplaza la del pedido. Lo que ya estaba conserva el precio con el que se pidió, aunque cambie la cantidad (una
+// línea por producto: las métricas cuentan los pedidos de cada producto con esa regla). Lo nuevo entra con el precio
+// de hoy y, como en el pedido manual, puede ser un producto pausado. Si un producto que ya estaba se borró del
+// catálogo, su línea sigue valiendo: es una copia
+export async function editarItems(id: string, cantidades: Map<string, number>) {
+  const pedido = await Pedido.findById(id).select('estado items').lean();
+  if (!pedido) throw new ErrorHttp(404, NO_ENCONTRADO);
+  if (!ABIERTOS.includes(pedido.estado)) {
+    throw new ErrorHttp(409, EDICION_CERRADA[pedido.estado] ?? `El pedido está ${pedido.estado}`);
+  }
+
+  const anteriores = new Map(pedido.items.map((item) => [String(item.producto), item]));
+  const nuevos = new Map([...cantidades].filter(([producto]) => !anteriores.has(producto)));
+  const cotizacion = nuevos.size > 0 ? await carritoService.cotizar(nuevos, { incluirPausados: true }) : null;
+  if (cotizacion && cotizacion.noDisponibles.length > 0) return { noDisponibles: cotizacion.noDisponibles };
+  const cotizados = new Map(cotizacion?.items.map((item) => [String(item.producto), item]));
+
+  // En el orden en que los manda la app
+  const items: IItemPedido[] = [];
+  for (const [producto, cantidad] of cantidades) {
+    const base = anteriores.get(producto) ?? cotizados.get(producto);
+    if (!base) continue;
+    const { nombre, precio, categoria } = base;
+    items.push({ producto: base.producto, nombre, precio, categoria, cantidad });
+  }
+  const total = redondear(items.reduce((suma, item) => suma + item.precio * item.cantidad, 0));
+
+  // El estado y la seña se revisan en el mismo filtro: una entrega, una cancelación o una seña que llegue entre la
+  // lectura y la escritura no se pisa. Los ítems no hace falta: la app manda la lista completa y gana la última
+  const actualizado = await Pedido.findOneAndUpdate(
+    {
+      _id: id,
+      estado: { $in: ABIERTOS },
+      $or: [{ sena: { $exists: false } }, { 'sena.monto': { $lte: total } }],
+    },
+    { items, total },
+    { runValidators: true }
+  );
+  if (!actualizado) {
+    const ahora = await Pedido.findById(id).select('estado sena').lean();
+    if (!ahora) throw new ErrorHttp(404, NO_ENCONTRADO);
+    if (ahora.sena && ABIERTOS.includes(ahora.estado)) {
+      throw new ErrorHttp(
+        409,
+        `La seña ($${ahora.sena.monto.toLocaleString('es-AR')}) es más que el nuevo total ($${total.toLocaleString('es-AR')}): corregila antes de sacar productos`
+      );
+    }
+    throw new ErrorHttp(409, EDICION_CERRADA[ahora.estado] ?? `El pedido está ${ahora.estado}`);
+  }
+  return { pedido: await obtener(id) };
 }

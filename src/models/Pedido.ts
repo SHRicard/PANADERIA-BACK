@@ -33,6 +33,8 @@ export interface IPedido {
   total: number;
   estado: EstadoPedido;
   origen: OrigenPedido;
+  /** true: el cliente quiere que se lo manden · false: lo pasa a retirar */
+  conEnvio: boolean;
   nota?: string;
   /** Solo si el dueño confirmó la seña */
   sena?: ISena;
@@ -65,7 +67,8 @@ const senaSchema = new Schema<ISena>(
     monto: {
       type: Number,
       required: true,
-      validate: { validator: (monto: number) => monto > 0, message: 'La seña tiene que ser mayor que 0' },
+      // 0 = confirmado sin seña
+      validate: { validator: (monto: number) => monto >= 0, message: 'La seña no puede ser negativa' },
     },
     pagadaEn: { type: Date, required: true },
   },
@@ -89,6 +92,9 @@ const pedidoSchema = new Schema<IPedido>(
     estado: { type: String, enum: ESTADOS_PEDIDO, default: 'pendiente' },
     // Los pedidos anteriores a este campo no lo tienen guardado: son todos de la web (pedidosService lo completa)
     origen: { type: String, enum: ORIGENES_PEDIDO, default: 'web' },
+    // Los pedidos anteriores a este campo no lo tienen: antes no había envío, así que son retiro (el default de acá
+    // al hidratar, y pedidosService.completar en las lecturas con lean)
+    conEnvio: { type: Boolean, default: false },
     nota: { type: String, trim: true, maxlength: 300 },
     // Opcionales: los pedidos anteriores no los tienen. Que la seña no pase del total lo controla pedidosService
     sena: { type: senaSchema },

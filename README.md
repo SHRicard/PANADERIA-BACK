@@ -51,7 +51,7 @@ Node.js + TypeScript + Express + MongoDB (Mongoose) + Cloudinary + login con JWT
 | POST   | `/api/carrito`                      | Cotizar el carrito: `{ "items": [{ "productoId": "...", "cantidad": 2 }] }` → precios actuales, subtotales, total y los productos que ya no están disponibles. No guarda nada (el carrito vive en el navegador). Máx. 100 cada 10 minutos por IP y body de hasta 10kb               |
 | POST   | `/api/pedidos`                      | Hacer un pedido sin login (JSON, ver abajo). Máx. 10 por hora por IP y body de hasta 10kb                                                                                                                                                                                           |
 
-Body de `POST /api/pedidos`: `{ "cliente": { "nombre": "...", "telefono": "..." }, "items": [{ "productoId": "...", "cantidad": 2 }], "nota": "..." }`. El precio y el total los calcula el servidor; lo que mande el cliente se ignora. Responde `201` con `{ id, items, total, estado, createdAt }`, sin datos de clientes. El total sale de la misma cuenta que `POST /api/carrito`, así que coincide con lo que el cliente vio en el carrito.
+Body de `POST /api/pedidos`: `{ "cliente": { "nombre": "...", "telefono": "..." }, "items": [{ "productoId": "...", "cantidad": 2 }], "nota": "...", "conEnvio": true }`. `conEnvio` es si quiere que se lo manden (`true`) o lo pasa a retirar (`false`); es opcional y sin él queda `false` (cualquier otro valor que no sea `true`, `false` o `null`: `400`). El precio y el total los calcula el servidor; lo que mande el cliente se ignora. Responde `201` con `{ id, items, total, estado, conEnvio, createdAt }`, sin datos de clientes. El total sale de la misma cuenta que `POST /api/carrito`, así que coincide con lo que el cliente vio en el carrito.
 
 Respuesta de `POST /api/carrito`: `{ "items": [{ "productoId", "nombre", "precio", "cantidad", "subtotal", "portada" }], "noDisponibles": ["..."], "cantidadTotal": 3, "total": 28000 }`. Los productos pausados o eliminados no son un error: vuelven en `noDisponibles` y no suman. Acepta un carrito vacío (total `0`) y las mismas reglas de ítems que el pedido (hasta 30 productos, cantidades enteras de 1 a 50, los repetidos se suman).
 
@@ -87,8 +87,9 @@ Respuesta de `POST /api/carrito`: `{ "items": [{ "productoId", "nombre", "precio
 | DELETE | `/api/promos/:id`                                     | Borrar la promo (también su archivo en Cloudinary). Responde `204` |
 | GET    | `/api/pedidos`                                        | Pedidos, del más nuevo al más viejo (`?estado=pendiente`, `?pagina=1`, `?limite=20`, máx. 100). Cada uno con su `saldo` y su `origen` (ver abajo)                                                                                             |
 | GET    | `/api/pedidos/:id`                                    | Detalle de un pedido con los datos del cliente, su cantidad de pedidos el `saldo` y el `origen`                                                                                                                                             |
-| POST   | `/api/pedidos/manuales`                               | Cargar un pedido que le hicieron al dueño por fuera de la web (WhatsApp, en persona). Mismo body que el pedido público, más `"sena": { "monto": 35000 }` opcional. Responde `201` con el detalle (ver abajo) |
-| PUT    | `/api/pedidos/:id/sena`                               | Confirmar la seña: `{ "monto": 35000 }` (mayor que 0 y hasta el total). Pasa a `confirmado`. Otra vez sobre un pedido confirmado, corrige el monto. Responde el detalle                                                         |
+| POST   | `/api/pedidos/manuales`                               | Cargar un pedido que le hicieron al dueño por fuera de la web (WhatsApp, en persona). Mismo body que el pedido público (también `conEnvio`), más `"sena": { "monto": 35000 }` opcional. Responde `201` con el detalle (ver abajo) |
+| PUT    | `/api/pedidos/:id/items`                              | Cambiar los productos de un pedido abierto (el cliente pidió sumar, sacar o cambiar algo): `{ "items": [{ "productoId": "...", "cantidad": 2 }] }`, la lista **completa**. Responde el detalle (ver [Editar un pedido](#editar-un-pedido)) |
+| PUT    | `/api/pedidos/:id/sena`                               | Confirmar la seña: `{ "monto": 35000 }` (de 0 hasta el total; `0` = confirmado **sin seña**). Pasa a `confirmado`. Otra vez sobre un pedido confirmado, corrige el monto. Responde el detalle                                       |
 | DELETE | `/api/pedidos/:id/sena`                               | Quitar la seña (por si se confirmó por error): vuelve a `pendiente`. Responde el detalle                                                                                                                                        |
 | PUT    | `/api/pedidos/:id/entrega`                            | Marcar entregado, con o sin seña. Responde el detalle                                                                                                                                                                           |
 | DELETE | `/api/pedidos/:id/entrega`                            | Deshacer la entrega: vuelve a `confirmado` si tiene seña, si no a `pendiente`. Responde el detalle                                                                                                                              |
@@ -96,6 +97,8 @@ Respuesta de `POST /api/carrito`: `{ "items": [{ "productoId", "nombre", "precio
 | DELETE | `/api/pedidos/:id/cancelacion`                        | Deshacer la cancelación: vuelve a `confirmado` o `pendiente`. Responde el detalle                                                                                                                                               |
 | PUT    | `/api/pedidos/:id/visto`                              | Marcar que el dueño ya lo vio: deja de salir como nuevo. No cambia el estado ni `updatedAt`. Marcarlo otra vez no es un error. Responde el detalle |
 | DELETE | `/api/pedidos/:id/visto`                              | Volver a marcarlo como nuevo (por si tocó sin querer). Responde el detalle |
+| PUT    | `/api/pedidos/:id/envio`                              | El cliente quiere que se lo manden: `conEnvio: true`. Solo pedidos `pendiente` o `confirmado` (si no, `409`). Marcarlo otra vez no es un error. Responde el detalle |
+| DELETE | `/api/pedidos/:id/envio`                              | Lo pasa a retirar: `conEnvio: false`. Las mismas reglas. Responde el detalle |
 | GET    | `/api/clientes`                                       | Clientes con su cantidad de pedidos y la fecha del último                                                                                                                                                                       |
 | GET    | `/api/clientes/:id`                                   | Un cliente con sus últimos 20 pedidos                                                                                                                                                                                           |
 | PATCH  | `/api/ajustes`                                        | Cambiar los ajustes de la web: `{ "estiloCatalogo"?, "cerrado"?, "mensajeCerrado"? }` (el mensaje, hasta 280 letras). Solo cambia lo que viene; un valor fuera de la lista da `400`. Responde los ajustes completos |
@@ -298,7 +301,7 @@ Lo que ve el dueño al abrir la app (el inicio). Es privado y se calcula al vuel
 | Estado       | Qué significa                   | Cómo se llega                                                         |
 | ------------ | ------------------------------- | --------------------------------------------------------------------- |
 | `pendiente`  | Recién hecho, esperando la seña | Al crearlo, o quitando la seña                                        |
-| `confirmado` | La seña está pagada             | `PUT /api/pedidos/:id/sena`                                           |
+| `confirmado` | La seña está pagada (o sin seña, con `monto: 0`) | `PUT /api/pedidos/:id/sena`                          |
 | `entregado`  | Ya lo retiró                    | `PUT /api/pedidos/:id/entrega` (desde `pendiente` o `confirmado`)     |
 | `cancelado`  | No va                           | `PUT /api/pedidos/:id/cancelacion` (desde `pendiente` o `confirmado`) |
 
@@ -306,6 +309,7 @@ Lo que ve el dueño al abrir la app (el inicio). Es privado y se calcula al vuel
 - Cada respuesta de pedidos (lista, detalle y acciones) trae **`saldo`**: lo que falta cobrar al entregar (total menos la seña). Se calcula, no se guarda.
 - Si el pedido está en un estado que no permite la acción (por ejemplo, cancelar uno entregado), responde `409` con el motivo. Si dos acciones llegan a la vez, gana una y la otra recibe `409`.
 - Cada pedido trae **`origen`**: `web` (lo hizo el cliente desde la web) o `manual` (lo cargó el dueño). Los pedidos anteriores a este campo salen como `web`.
+- Cada pedido trae **`conEnvio`**: `true` si el cliente quiere que se lo manden, `false` si lo pasa a retirar. Se elige al hacer el pedido (web o manual) y el dueño lo cambia con `PUT`/`DELETE /api/pedidos/:id/envio` mientras el pedido está abierto. Los pedidos anteriores a este campo salen como `false` (antes no había envío). No cambia el total: el envío no tiene costo en el sistema.
 - Cada pedido trae **`visto`**: si el dueño ya lo vio en la app. Los de la web nacen en `false` (la app los marca como nuevos) hasta que el dueño abre el detalle y toca «Marcar como visto» (`PUT /api/pedidos/:id/visto`); los manuales nacen en `true` (los cargó él). Los pedidos anteriores a este campo salen como `true`. Las acciones (seña, entrega, cancelación) no lo cambian. `POST /api/pedidos` (público) no lo devuelve.
 
 ### Pedido manual
@@ -323,9 +327,24 @@ Lo que ve el dueño al abrir la app (el inicio). Es privado y se calcula al vuel
 
 - Las mismas reglas que el pedido de la web: el cliente se crea o se actualiza por teléfono, y nombre, precio y total salen de la base.
 - **Puede incluir productos pausados** (por ejemplo, el pan dulce que le encargan fuera de temporada). Los eliminados no: `400` con `productosNoDisponibles`.
-- `sena` es opcional. Sin seña, entra `pendiente`; con seña (mayor que 0 y hasta el total), entra `confirmado`.
+- `sena` es opcional. Sin `sena`, entra `pendiente`; con seña (de 0 hasta el total; `0` = confirmado sin seña), entra `confirmado`.
 - Queda con `origen: "manual"` y sigue los mismos pasos que cualquier pedido: seña, entrega y cancelación.
 - No tiene el límite de 10 por hora del pedido público.
+
+### Editar un pedido
+
+`PUT /api/pedidos/:id/items` (privado) es para cuando el cliente, después de hacer el pedido, le escribe al dueño para sumar algo, sacar algo o cambiar cantidades. Así no hace falta cargar otro pedido aparte:
+
+```json
+{ "items": [{ "productoId": "...", "cantidad": 3 }, { "productoId": "...", "cantidad": 1 }] }
+```
+
+- Va la lista **completa** como tiene que quedar: reemplaza la del pedido (lo que no viene, se saca). Las mismas reglas que al crearlo: de 1 a 30 productos, cantidades de 1 a 50, y los repetidos se juntan.
+- **Lo que ya estaba conserva su precio** (el del momento del pedido), aunque cambie la cantidad o el producto haya cambiado de precio, de nombre o se haya borrado. **Lo nuevo entra con el precio de hoy** y, como en el pedido manual, puede ser un producto pausado. Un producto que no existe: `400` con `productosNoDisponibles`.
+- El `total` (y el `saldo`) se recalculan en el servidor. El estado, la seña y `visto` no cambian: si estaba `confirmado`, sigue confirmado con la misma seña.
+- Solo pedidos `pendiente` o `confirmado`: uno entregado o cancelado responde `409`. Si el nuevo total queda por debajo de la seña, también `409` ("La seña ($60.000) es más que el nuevo total ($30.000): corregila antes de sacar productos").
+- Sirve para pedidos de la web y manuales. Las métricas usan el pedido como quedó: si se edita, cambian las ventas del día en que se hizo.
+- Responde el detalle, como `GET /api/pedidos/:id`.
 
 Categorías: son el **gusto** del producto, de una lista fija en `src/models/Producto.ts` y en este orden: Dulce, Salado, Agridulce, Ácido, Amargo, Picante. Se aceptan sin importar mayúsculas ni acentos (`acido` se guarda como `Ácido`); cualquier otra (`Dulse`, `Facturas`) responde `400` con la lista. Cada pedido guarda el gusto de cada producto al momento de la venta, para las métricas.
 
