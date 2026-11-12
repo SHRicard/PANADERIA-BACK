@@ -1,7 +1,7 @@
 import { Schema, model } from 'mongoose';
 
 // Cómo se ve el catálogo público, en el orden en que los muestra la app del dueño
-export const ESTILOS_CATALOGO = ['vidriera', 'carta'] as const;
+export const ESTILOS_CATALOGO = ['vidriera', 'carta', 'dia-navidad', 'noche-navidad'] as const;
 export type EstiloCatalogo = (typeof ESTILOS_CATALOGO)[number];
 
 // Lo que el dueño les escribe a los clientes en el cartel. Vacío, la web pone uno por defecto
