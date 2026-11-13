@@ -3,6 +3,7 @@ import { Cliente, ICliente } from '../models/Cliente';
 import { EstadoPedido, IItemPedido, IPedido, OrigenPedido, Pedido } from '../models/Pedido';
 import { ErrorHttp } from '../utils/errores';
 import { Paginado } from '../utils/paginado';
+import * as agendaService from './agendaService';
 import * as ajustesService from './ajustesService';
 import * as carritoService from './carritoService';
 
@@ -15,6 +16,10 @@ export interface DatosPedido {
   nota?: string;
   /** Si quiere que se lo manden. Si no lo dice, lo pasa a retirar */
   conEnvio: boolean;
+  /** Para qué día es (AAAA-MM-DD). Opcional solo durante la transición: la web y la app de antes no la mandan */
+  fechaEntrega?: string;
+  /** La clave del intento de la web: el mismo intento no crea dos pedidos */
+  intento?: string;
 }
 
 /** El pedido que carga el dueño a mano: lo mismo, más la seña si el cliente ya la transfirió */
@@ -43,15 +48,21 @@ const senaMayorQueTotal = (total: number) =>
 // Lo que se agrega al responder: el saldo (lo que falta cobrar al entregar: el total menos la seña, si la pagó),
 // que se calcula y no se guarda; el origen de los pedidos anteriores a ese campo, que son todos de la web, y si el
 // dueño lo vio: los anteriores a ese campo, sí (si no, la app los mostraría todos como nuevos). Y el envío: los
-// anteriores a ese campo son retiro
+// anteriores a ese campo son retiro. La fecha de entrega, null en los anteriores a la agenda (hasta migrar-fecha-entrega)
 export function completar<
-  T extends Pick<IPedido, 'total' | 'sena'> & { origen?: OrigenPedido; visto?: boolean; conEnvio?: boolean },
+  T extends Pick<IPedido, 'total' | 'sena'> & {
+    origen?: OrigenPedido;
+    visto?: boolean;
+    conEnvio?: boolean;
+    fechaEntrega?: string;
+  },
 >(pedido: T) {
   return {
     ...pedido,
     origen: pedido.origen ?? 'web',
     visto: pedido.visto ?? true,
     conEnvio: pedido.conEnvio ?? false,
+    fechaEntrega: pedido.fechaEntrega ?? null,
     saldo: redondear(pedido.total - (pedido.sena?.monto ?? 0)),
   };
 }
@@ -71,9 +82,9 @@ async function sinEstado(id: string, mensaje: string) {
 // Lo que comparten el pedido de la web y el manual: el cliente se crea o se actualiza por teléfono, y nombre,
 // precio, categoría y total salen de la cotización (de la base), nunca de lo que mande el front
 async function guardar(
-  { nombre, telefono, nota, conEnvio }: DatosPedido,
+  { nombre, telefono, nota, conEnvio, fechaEntrega }: DatosPedido,
   cotizacion: Cotizacion,
-  extra: Pick<IPedido, 'origen'> & { visto: boolean } & Partial<Pick<IPedido, 'estado' | 'sena'>>
+  extra: Pick<IPedido, 'origen'> & { visto: boolean } & Partial<Pick<IPedido, 'estado' | 'sena' | 'intento'>>
 ) {
   const items: IItemPedido[] = cotizacion.items.map((item) => ({
     producto: item.producto,
@@ -98,6 +109,7 @@ async function guardar(
     total: cotizacion.total,
     nota,
     conEnvio,
+    fechaEntrega,
     ...extra,
   });
 }
@@ -106,17 +118,34 @@ async function guardar(
 export const NEGOCIO_CERRADO = 'Por ahora no estamos tomando pedidos. ¡Volvé a mirar en unos días!';
 
 // El pedido del cliente desde la web. Si hay productos pausados o eliminados no lo crea: devuelve cuáles son.
-// Con el negocio cerrado responde 409: la web ya muestra el cartel, pero una pestaña abierta de antes podía mandarlo
+// Con el negocio cerrado responde 409: la web ya muestra el cartel, pero una pestaña abierta de antes podía mandarlo.
+// La fecha pasa por las reglas de la agenda, con la anticipación de la misma cotización (la que vio en el carrito)
 export async function crear(datos: DatosPedido) {
+  // El mismo intento ya se guardó (doble toque, o se cortó la conexión después de guardarlo): ese pedido, sin revisar
+  // nada más (el día pudo llenarse justo con él)
+  const repetido = datos.intento ? await Pedido.findOne({ intento: datos.intento }) : null;
+  if (repetido) return { pedido: repetido };
   if (await ajustesService.estaCerrado()) throw new ErrorHttp(409, NEGOCIO_CERRADO);
   const cotizacion = await carritoService.cotizar(datos.cantidades);
   if (cotizacion.noDisponibles.length > 0) return { noDisponibles: cotizacion.noDisponibles };
+  if (datos.fechaEntrega) await agendaService.revisarFechaDelCliente(datos.fechaEntrega, cotizacion.anticipacionHoras);
   // Es lo que la app le marca al dueño como nuevo hasta que lo abre y toca «Marcar como visto»
-  return { pedido: await guardar(datos, cotizacion, { origen: 'web', visto: false }) };
+  try {
+    return { pedido: await guardar(datos, cotizacion, { origen: 'web', visto: false, intento: datos.intento }) };
+  } catch (error) {
+    // Dos pedidos con el mismo intento a la vez: el índice único deja pasar uno solo, y el otro responde ese
+    const ganador = esClaveRepetida(error) && datos.intento ? await Pedido.findOne({ intento: datos.intento }) : null;
+    if (ganador) return { pedido: ganador };
+    throw error;
+  }
 }
 
+const esClaveRepetida = (error: unknown) =>
+  typeof error === 'object' && error !== null && 'code' in error && error.code === 11000;
+
 // El pedido que carga el dueño (le escribieron por WhatsApp, se lo pidieron en persona): las mismas reglas que el
-// de la web, pero puede incluir productos pausados. Si ya cobró la seña, entra confirmado. Responde el detalle
+// de la web, pero puede incluir productos pausados y la fecha es libre (sin las reglas de la agenda: pudo arreglar
+// cualquier día con el cliente, también uno marcado como lleno). Si ya cobró la seña, entra confirmado. Responde el detalle
 export async function crearManual({ montoSena, ...datos }: DatosPedidoManual) {
   const cotizacion = await carritoService.cotizar(datos.cantidades, { incluirPausados: true });
   if (cotizacion.noDisponibles.length > 0) return { noDisponibles: cotizacion.noDisponibles };
@@ -128,9 +157,15 @@ export async function crearManual({ montoSena, ...datos }: DatosPedidoManual) {
   return { pedido: await obtener(pedido.id) };
 }
 
+export interface FiltroPedidos {
+  estado?: EstadoPedido;
+  /** Los de un día de la agenda */
+  fechaEntrega?: string;
+}
+
 // Del más nuevo al más viejo
-export async function listar(estado: EstadoPedido | undefined, { pagina, limite }: Paginado) {
-  const filtro = estado ? { estado } : {};
+export async function listar({ estado, fechaEntrega }: FiltroPedidos, { pagina, limite }: Paginado) {
+  const filtro = { ...(estado && { estado }), ...(fechaEntrega && { fechaEntrega }) };
   const [pedidos, totalPedidos] = await Promise.all([
     Pedido.find(filtro)
       .sort({ createdAt: -1 })
@@ -278,6 +313,19 @@ export async function cambiarEnvio(id: string, conEnvio: boolean) {
     throw await noSePudo(id, {
       entregado: 'El pedido ya está entregado: no se puede cambiar el envío',
       cancelado: 'El pedido está cancelado: no se puede cambiar el envío',
+    });
+  }
+  return obtener(id);
+}
+
+// El cliente le escribió para cambiar el día: solo mientras el pedido sigue abierto, como el envío y los productos.
+// Sin las reglas de la agenda: lo arregló el dueño con el cliente
+export async function cambiarFechaEntrega(id: string, fechaEntrega: string) {
+  const actualizado = await Pedido.findOneAndUpdate({ _id: id, estado: { $in: ABIERTOS } }, { $set: { fechaEntrega } });
+  if (!actualizado) {
+    throw await noSePudo(id, {
+      entregado: 'El pedido ya está entregado: no se puede cambiar la fecha',
+      cancelado: 'El pedido está cancelado: no se puede cambiar la fecha',
     });
   }
   return obtener(id);

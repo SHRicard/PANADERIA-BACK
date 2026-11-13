@@ -5,6 +5,7 @@ import { Cliente, ICliente } from '../models/Cliente';
 import { CAMPOS_INSUMO, IInsumo, ILogInsumo, Insumo, UnidadInsumo } from '../models/Insumo';
 import { EstadoPedido, IItemPedido, IPedido, ISena, OrigenPedido, Pedido } from '../models/Pedido';
 import { IProducto, Producto, SIN_MAYUSCULAS_NI_ACENTOS } from '../models/Producto';
+import { fechaDeUnPedidoViejo } from '../services/agendaService';
 import { hoyEnArgentina } from '../utils/fecha';
 import { normalizarTelefono } from '../utils/telefono';
 
@@ -95,7 +96,9 @@ const NOTAS = [
   'Si se puede, en caja',
 ];
 
-type ProductoDeEjemplo = Pick<IProducto, 'nombre' | 'precio' | 'categoria' | 'disponible'> & { _id: Types.ObjectId };
+type ProductoDeEjemplo = Pick<IProducto, 'nombre' | 'precio' | 'categoria' | 'disponible' | 'anticipacionHoras'> & {
+  _id: Types.ObjectId;
+};
 
 // Los de hace días ya se entregaron casi todos; los de hoy y los de los últimos días siguen abiertos
 function estadoSegunEdad(edad: number): EstadoPedido {
@@ -150,6 +153,12 @@ function armarPedido(dia: string, edad: number, ahora: Date, productos: Producto
   const ultimoPago = sena?.pagadaEn ?? creado;
   const entregadoEn = estado === 'entregado' ? antesDe(despues(ultimoPago, entre(12, 60)), ahora) : undefined;
   const canceladoEn = estado === 'cancelado' ? antesDe(despues(ultimoPago, entre(2, 30)), ahora) : undefined;
+  // Con las mismas reglas que migrar-fecha-entrega: la base de pruebas queda como va a quedar la de producción
+  const horas = Math.max(
+    0,
+    ...items.map((item) => productos.find((producto) => producto._id.equals(item.producto))?.anticipacionHoras ?? 24)
+  );
+  const fechaEntrega = fechaDeUnPedidoViejo({ estado, createdAt: creado, entregadoEn, sena }, horas);
 
   const pedido: PedidoArmado['pedido'] = {
     items,
@@ -160,6 +169,7 @@ function armarPedido(dia: string, edad: number, ahora: Date, productos: Producto
     visto: origen === 'manual' || estado !== 'pendiente' || edad > 1,
     // La mayoría lo pasa a retirar
     conEnvio: conProbabilidad(0.3),
+    fechaEntrega,
     ...(conProbabilidad(0.2) && { nota: alguno(NOTAS) }),
     ...(sena && { sena }),
     ...(entregadoEn && { entregadoEn }),
@@ -263,7 +273,9 @@ async function main() {
     console.log(`Borré los ${ids.length} clientes de ejemplo y sus ${deletedCount} pedidos`);
   }
 
-  const productos = await Producto.find().select('nombre precio categoria disponible').lean<ProductoDeEjemplo[]>();
+  const productos = await Producto.find()
+    .select('nombre precio categoria disponible anticipacionHoras')
+    .lean<ProductoDeEjemplo[]>();
   if (!productos.some((producto) => producto.disponible)) {
     throw new Error('No hay productos activos: corré primero npm run sembrar o cargalos desde la app');
   }

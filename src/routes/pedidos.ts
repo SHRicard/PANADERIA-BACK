@@ -9,15 +9,28 @@ const router = Router();
 // Parser propio con límite chico. Funciona porque index.ts monta este router antes del express.json() global
 const leerJson = express.json({ limit: '10kb' });
 
+// Cuenta solo los pedidos creados: un rechazo (día lleno, fecha vieja, producto pausado) no gasta el cupo, así un cliente
+// que elige otro día, o varios en el mismo wifi, no quedan bloqueados una hora. 30 y no 10: los celulares con datos
+// suelen salir varios por la misma IP pública, y en las fiestas piden muchos a la vez (lo vio el testing del 12/11)
 const limitarPedidos = rateLimit({
   windowMs: 60 * 60 * 1000,
-  limit: 10,
+  limit: 30,
+  skipFailedRequests: true,
   standardHeaders: 'draft-8',
   legacyHeaders: false,
   message: { error: 'Hiciste demasiados pedidos. Probá de nuevo en un rato.' },
 });
 
-router.post('/', limitarPedidos, leerJson, pedidosController.crear);
+// Y, aparte, todos los intentos: sin este tope, los rechazos serían ilimitados (cada uno cotiza contra la base)
+const limitarIntentos = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: 150,
+  standardHeaders: false,
+  legacyHeaders: false,
+  message: { error: 'Hiciste demasiados intentos. Probá de nuevo en un rato.' },
+});
+
+router.post('/', limitarIntentos, limitarPedidos, leerJson, pedidosController.crear);
 // El pedido que carga el dueño a mano: privado y sin el límite por IP del público
 router.post('/manuales', requiereAdmin, leerJson, pedidosController.crearManual);
 
@@ -25,6 +38,8 @@ router.get('/', requiereAdmin, pedidosController.listar);
 router.get('/:id', requiereAdmin, pedidosController.detalle);
 // El cliente pidió sumar, sacar o cambiar algo: la app manda la lista completa de productos (solo pedidos abiertos)
 router.put('/:id/items', requiereAdmin, leerJson, pedidosController.editarItems);
+// Otro día (solo pedidos abiertos). No hay DELETE: todo pedido tiene fecha
+router.put('/:id/fecha-entrega', requiereAdmin, leerJson, pedidosController.cambiarFechaEntrega);
 
 // Cada paso del pedido: PUT lo registra y DELETE lo deshace (por si el dueño tocó por error)
 router.put('/:id/sena', requiereAdmin, leerJson, pedidosController.registrarSena);

@@ -12,7 +12,9 @@
     "subir-marca": "tsx src/scripts/subirMarca.ts",
     "sembrar": "tsx src/scripts/sembrarProductos.ts",
     "migrar-anticipacion": "tsx src/scripts/migrarAnticipacion.ts",
-    "sembrar-pedidos": "tsx src/scripts/sembrarPedidos.ts"
+    "sembrar-pedidos": "tsx src/scripts/sembrarPedidos.ts",
+    "migrar-fecha-entrega": "tsx src/scripts/migrarFechaEntrega.ts",
+    "copiar-fotos": "tsx src/scripts/copiarFotos.ts"
   },
   "keywords": [],
   "author": "",
