@@ -1,5 +1,6 @@
 import { NextFunction, Request, Response } from 'express';
 import { verificarToken } from '../services/authService';
+import { guardarLogs } from '../config/entorno';
 import { registrar } from '../services/logsService';
 import { ZONA_ARGENTINA } from '../utils/fecha';
 
@@ -100,6 +101,9 @@ export function registrarPeticiones(req: Request, res: Response, next: NextFunct
     if (motivo) partes.push(pintar(color, `→ ${motivo}`));
     console.log(partes.join(' '));
 
+    // En la compu no se guarda nada: la base es la de producción y las pruebas aparecerían en Más → Logs, o mandarían
+    // el aviso de IP sospechosa a los admins (config/entorno.ts). La línea de la terminal sí sale
+    if (!guardarLogs) return;
     // Mirar los logs no suma logs (si falla, sí)
     if (ruta.startsWith('/api/logs') && !cortada && codigo < 400) return;
     // Lo que hace el dueño desde la app (con token de admin válido) no se guarda: los logs son para ver lo público.

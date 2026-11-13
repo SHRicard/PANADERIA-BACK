@@ -34,6 +34,7 @@ Node.js + TypeScript + Express + MongoDB (Mongoose) + Cloudinary + login con JWT
 - `CORS_ORIGINS` solo si la web suma otro dominio (sin `/` al final): `https://panaderia-front-psi.vercel.app` ya está fijo en `src/index.ts`.
 - En MongoDB Atlas, permitir el acceso desde cualquier IP (`0.0.0.0/0`) en _Network Access_, porque Render no tiene IP fija en el plan gratuito.
 - Ping de mantenimiento (UptimeRobot / cron-job.org): `GET /health`
+- **Logs e índices, solo en Render.** Render define `RENDER=true` sola: con eso se guardan las peticiones en `logs` (Más → Logs y el aviso de IP sospechosa) y Mongoose crea los índices que falten. En la compu no, porque el `.env` apunta a la misma base que producción y las pruebas aparecían en Logs como clientes. Para probarlo en local: `GUARDAR_LOGS=true` y `CREAR_INDICES=true` en el `.env` (`src/config/entorno.ts`).
 
 ## Endpoints
 
