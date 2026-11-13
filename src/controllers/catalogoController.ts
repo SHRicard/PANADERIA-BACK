@@ -35,9 +35,13 @@ export async function secciones(req: Request, res: Response) {
   });
 }
 
-// GET /api/catalogo/filtros  (los tipos y los gustos que tienen productos activos, con cuántos tiene cada uno)
-export async function opcionesDeFiltros(_req: Request, res: Response) {
-  res.json(await productosService.opcionesDeFiltros());
+// GET /api/catalogo/filtros?tipo=&categoria=  (los tipos y los gustos que tienen productos activos, con cuántos tiene
+// cada uno con el otro filtro puesto: con ?tipo=, los gustos cuentan solo los de ese tipo)
+export async function opcionesDeFiltros(req: Request, res: Response) {
+  const filtros = leerFiltros(req.query);
+  if (typeof filtros === 'string') return res.status(400).json({ error: filtros });
+
+  res.json(await productosService.opcionesDeFiltros({ tipo: filtros.tipo, categoria: filtros.categoria }));
 }
 
 // GET /api/catalogo/categorias  (las de la lista fija, en orden, con cuántos productos activos tiene cada una)

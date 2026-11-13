@@ -6,7 +6,9 @@ import mongoose from 'mongoose';
 import multer from 'multer';
 import { comprobarMarca, problemasDeConfiguracion } from './config/cloudinary';
 import { conectarDB } from './config/db';
+import { anotarError, registrarPeticiones } from './middleware/registro';
 import { mensajeDeMulter } from './middleware/upload';
+import agendaRoutes from './routes/agenda';
 import ajustesRoutes from './routes/ajustes';
 import almacenamientoRoutes from './routes/almacenamiento';
 import authRoutes from './routes/auth';
@@ -28,6 +30,9 @@ const app = express();
 
 // Render (y otros hosts) usan un proxy delante de la app
 app.set('trust proxy', 1);
+
+// Primero de todo: así también quedan en el log los rechazos de CORS y los rate limits
+app.use(registrarPeticiones);
 
 app.use(helmet());
 
@@ -75,10 +80,12 @@ app.use('/api/recetas', recetasRoutes);
 app.use('/api/almacenamiento', almacenamientoRoutes);
 app.use('/api/metricas', metricasRoutes);
 app.use('/api/resumen', resumenRoutes);
+app.use('/api/agenda', agendaRoutes);
 
 // Manejo de errores (incluye errores de multer, de Cloudinary, de Mongoose y del parser de JSON)
 app.use((err: Error & { status?: number; type?: string }, _req: Request, res: Response, _next: NextFunction) => {
-  // Errores esperados que tiran los servicios: no son fallas del servidor, no se loguean
+  // Errores esperados que tiran los servicios: no son fallas del servidor, no se loguea el stack
+  // (su mensaje sale en la línea de la petición, middleware/registro.ts)
   if (err instanceof ErrorHttp) {
     return res.status(err.status).json({ error: err.message });
   }
@@ -92,6 +99,9 @@ app.use((err: Error & { status?: number; type?: string }, _req: Request, res: Re
   // Datos que no cumplen el esquema (precio negativo, número inválido) o imagen rechazada por Multer
   // (más de 5 MB): son errores de la petición, no del servidor
   if (err instanceof mongoose.Error.ValidationError || err instanceof mongoose.Error.CastError) {
+    // Su mensaje trae los valores (pueden ser el nombre o el teléfono de un cliente): al log va solo el campo
+    const campos = err instanceof mongoose.Error.ValidationError ? Object.keys(err.errors) : [err.path];
+    anotarError(res, `${err.name} en ${campos.join(', ')}`);
     return res.status(400).json({ error: err.message });
   }
   if (err instanceof multer.MulterError) {
@@ -100,6 +110,7 @@ app.use((err: Error & { status?: number; type?: string }, _req: Request, res: Re
   // Cualquier otra cosa es una falla del servidor (la base no responde, Cloudinary rechazó la subida…).
   // Se loguea entera, pero al cliente le llega un mensaje genérico: el técnico puede traer datos internos
   console.error(err);
+  anotarError(res, `${err.name}: ${String(err.message).split('\n')[0]}`);
   res.status(500).json({ error: 'Algo falló en el servidor. Probá de nuevo en unos minutos.' });
 });
 

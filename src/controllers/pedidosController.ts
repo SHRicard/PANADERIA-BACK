@@ -1,7 +1,8 @@
 import { Request, Response } from 'express';
 import { isValidObjectId } from 'mongoose';
-import { ESTADOS_PEDIDO, EstadoPedido } from '../models/Pedido';
+import { ESTADOS_PEDIDO, EstadoPedido, FECHA_ENTREGA_INVALIDA } from '../models/Pedido';
 import * as pedidosService from '../services/pedidosService';
+import { esFechaValida } from '../utils/fecha';
 import { leerPaginado } from '../utils/paginado';
 import { normalizarTelefono } from '../utils/telefono';
 import { leerItems } from './carritoController';
@@ -14,9 +15,14 @@ function esEstado(valor: unknown): valor is EstadoPedido {
   return typeof valor === 'string' && (ESTADOS_PEDIDO as readonly string[]).includes(valor);
 }
 
+const esFechaEntrega = (valor: unknown): valor is string => typeof valor === 'string' && esFechaValida(valor);
+
 const ITEMS_FUERA_DE_RANGO = 'El pedido tiene que tener entre 1 y 30 productos';
 
 // Devuelve los datos listos para el servicio, o el mensaje de error
+const FORMATO_INTENTO = /^[A-Za-z0-9-]{16,64}$/;
+const INTENTO_INVALIDO = 'intento tiene que ser una clave de 16 a 64 letras, números o guiones';
+
 function leerPedido(body: unknown): pedidosService.DatosPedido | string {
   if (!esObjeto(body) || !esObjeto(body.cliente)) return 'Faltan los datos del cliente';
 
@@ -38,14 +44,24 @@ function leerPedido(body: unknown): pedidosService.DatosPedido | string {
   const conEnvio = body.conEnvio ?? false;
   if (typeof conEnvio !== 'boolean') return 'conEnvio tiene que ser true (con envío) o false (lo pasa a retirar)';
 
+  // ⚠️ Transición: opcional mientras la web y la app de antes no la mandan. Cuando las dos estén actualizadas (y se
+  // haya corrido migrar-fecha-entrega), sin fecha pasa a ser un 400. Las reglas del cliente las revisa el servicio
+  const fechaEntrega = body.fechaEntrega ?? undefined;
+  if (fechaEntrega !== undefined && !esFechaEntrega(fechaEntrega)) return FECHA_ENTREGA_INVALIDA;
+
   // Los productos repetidos se juntan en un solo item sumando las cantidades (las mismas reglas que el carrito)
   const cantidades = leerItems(body.items, { minimo: 1, fueraDeRango: ITEMS_FUERA_DE_RANGO });
   if (typeof cantidades === 'string') return cantidades;
 
-  return { nombre, telefono, cantidades, nota, conEnvio };
+  // Opcional: la clave de este intento de la web, para no crear dos veces el mismo pedido (pedidosService.crear)
+  const intento = body.intento ?? undefined;
+  if (intento !== undefined && (typeof intento !== 'string' || !FORMATO_INTENTO.test(intento))) return INTENTO_INVALIDO;
+
+  return { nombre, telefono, cantidades, nota, conEnvio, fechaEntrega, intento };
 }
 
-// POST /api/pedidos  { cliente: { nombre, telefono }, items: [{ productoId, cantidad }], nota?, conEnvio? }  (pública)
+// POST /api/pedidos  { cliente: { nombre, telefono }, items: [{ productoId, cantidad }], fechaEntrega, nota?, conEnvio?,
+// intento? }  (pública). Con el mismo `intento` dos veces, responde el pedido que ya se había creado (201 igual)
 export async function crear(req: Request, res: Response) {
   const datos = leerPedido(req.body);
   if (typeof datos === 'string') return res.status(400).json({ error: datos });
@@ -66,6 +82,7 @@ export async function crear(req: Request, res: Response) {
     total: pedido.total,
     estado: pedido.estado,
     conEnvio: pedido.conEnvio,
+    fechaEntrega: pedido.fechaEntrega ?? null,
     createdAt: pedido.createdAt,
   });
 }
@@ -76,8 +93,9 @@ const MONTO_SENA_INVALIDO = 'El monto de la seña tiene que ser un número, 0 o 
 const esMontoValido = (monto: unknown): monto is number =>
   typeof monto === 'number' && Number.isFinite(monto) && monto >= 0;
 
-// POST /api/pedidos/manuales  { cliente: { nombre, telefono }, items: [{ productoId, cantidad }], nota?, conEnvio?, sena?: { monto } }
-// El dueño carga un pedido que le hicieron por fuera de la web. Responde 201 con el detalle
+// POST /api/pedidos/manuales  { cliente: { nombre, telefono }, items: [{ productoId, cantidad }], fechaEntrega, nota?,
+// conEnvio?, sena?: { monto } }  El dueño carga un pedido que le hicieron por fuera de la web (cualquier día, sin las
+// reglas de la agenda). Responde 201 con el detalle
 export async function crearManual(req: Request, res: Response) {
   const datos = leerPedido(req.body);
   if (typeof datos === 'string') return res.status(400).json({ error: datos });
@@ -100,13 +118,16 @@ export async function crearManual(req: Request, res: Response) {
   res.status(201).json(resultado.pedido);
 }
 
-// GET /api/pedidos?estado=pendiente&pagina=1&limite=20
+// GET /api/pedidos?estado=pendiente&fechaEntrega=2026-11-25&pagina=1&limite=20
 export async function listar(req: Request, res: Response) {
-  const { estado } = req.query;
+  const { estado, fechaEntrega } = req.query;
   if (estado !== undefined && !esEstado(estado)) {
     return res.status(400).json({ error: `estado tiene que ser uno de: ${ESTADOS_PEDIDO.join(', ')}` });
   }
-  res.json(await pedidosService.listar(estado, leerPaginado(req.query)));
+  if (fechaEntrega !== undefined && !esFechaEntrega(fechaEntrega)) {
+    return res.status(400).json({ error: FECHA_ENTREGA_INVALIDA });
+  }
+  res.json(await pedidosService.listar({ estado, fechaEntrega }, leerPaginado(req.query)));
 }
 
 // GET /api/pedidos/:id  (con los datos del cliente y cuántos pedidos tiene)
@@ -122,6 +143,15 @@ export async function registrarSena(req: Request<{ id: string }>, res: Response)
   const monto: unknown = esObjeto(req.body) ? req.body.monto : undefined;
   if (!esMontoValido(monto)) return res.status(400).json({ error: MONTO_SENA_INVALIDO });
   res.json(await pedidosService.registrarSena(req.params.id, Math.round(monto * 100) / 100));
+}
+
+// PUT /api/pedidos/:id/fecha-entrega  { fechaEntrega }  El cliente le pidió otro día al dueño (sin reglas: cualquier día)
+export async function cambiarFechaEntrega(req: Request<{ id: string }>, res: Response) {
+  if (!isValidObjectId(req.params.id)) return res.status(404).json({ error: 'No encontrado' });
+
+  const fechaEntrega: unknown = esObjeto(req.body) ? req.body.fechaEntrega : undefined;
+  if (!esFechaEntrega(fechaEntrega)) return res.status(400).json({ error: FECHA_ENTREGA_INVALIDA });
+  res.json(await pedidosService.cambiarFechaEntrega(req.params.id, fechaEntrega));
 }
 
 // PUT /api/pedidos/:id/items  { items: [{ productoId, cantidad }] }

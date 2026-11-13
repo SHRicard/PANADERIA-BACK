@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { Types, isValidObjectId } from 'mongoose';
+import * as agendaService from '../services/agendaService';
 import * as carritoService from '../services/carritoService';
 import { urlMiniatura } from '../utils/cloudinaryUrl';
 
@@ -34,7 +35,10 @@ export function leerItems(
 
 // POST /api/carrito  { items: [{ productoId, cantidad }] }
 // Cotiza el carrito con los precios de hoy y no guarda nada: el carrito vive en el navegador del cliente.
-// Un producto pausado o eliminado no es un error: vuelve en noDisponibles para que la web lo saque
+// Un producto pausado o eliminado no es un error: vuelve en noDisponibles para que la web lo saque.
+// entrega: los días que puede elegir para este carrito (el calendario de la web); el pedido revisa la misma cuenta.
+// Los días llenos son solo los que marcó el dueño. Los casi llenos (amarillos en la web) son los que se están llenando
+// según los productos por día del dueño: dicen que hay trabajo ese día, no quién pidió ni cuánto
 export async function cotizar(req: Request, res: Response) {
   const body: unknown = req.body;
   const cantidades = leerItems(typeof body === 'object' && body !== null && 'items' in body ? body.items : undefined, {
@@ -43,7 +47,9 @@ export async function cotizar(req: Request, res: Response) {
   });
   if (typeof cantidades === 'string') return res.status(400).json({ error: cantidades });
 
-  const { items, noDisponibles, total } = await carritoService.cotizar(cantidades);
+  const { items, noDisponibles, total, anticipacionHoras } = await carritoService.cotizar(cantidades);
+  const rango = await agendaService.rangoDeEntrega(anticipacionHoras);
+  const entrega = { ...rango, diasCasiLlenos: await agendaService.diasCasiLlenos(rango) };
   res.json({
     items: items.map(({ producto, nombre, precio, cantidad, foto }) => ({
       productoId: String(producto),
@@ -56,5 +62,6 @@ export async function cotizar(req: Request, res: Response) {
     noDisponibles,
     cantidadTotal: items.reduce((suma, item) => suma + item.cantidad, 0),
     total,
+    entrega,
   });
 }

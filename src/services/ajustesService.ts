@@ -1,10 +1,13 @@
 import { AJUSTES_POR_DEFECTO, Ajustes, ID_AJUSTES, IAjustes } from '../models/Ajustes';
 
 // Solo los ajustes: sin _id, __v ni fechas
-const datos = ({ estiloCatalogo, cerrado, mensajeCerrado }: IAjustes): IAjustes => ({
+const datos = ({ estiloCatalogo, cerrado, mensajeCerrado, productosPorDia, tema }: IAjustes): IAjustes => ({
   estiloCatalogo,
   cerrado,
   mensajeCerrado,
+  productosPorDia,
+  // Los documentos de antes no lo tienen guardado: Mongoose completa el default al leer, y por las dudas, claro
+  tema: tema ?? 'claro',
 });
 
 export async function obtener(): Promise<IAjustes> {

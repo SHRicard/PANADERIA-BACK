@@ -2,7 +2,7 @@ import { PipelineStage, Types } from 'mongoose';
 import { IInsumo, Insumo, UnidadInsumo } from '../models/Insumo';
 import { ESTADOS_PEDIDO, EstadoPedido, ORIGENES_PEDIDO, OrigenPedido, Pedido } from '../models/Pedido';
 import { CATEGORIAS, SIN_MAYUSCULAS_NI_ACENTOS } from '../models/Producto';
-import { hoyEnArgentina, ZONA_ARGENTINA } from '../utils/fecha';
+import { hoyEnArgentina, sumarDias, ZONA_ARGENTINA } from '../utils/fecha';
 import { Paginado } from '../utils/paginado';
 
 // Las métricas se calculan al vuelo sobre los pedidos y los insumos: no hay contadores guardados que se puedan
@@ -380,12 +380,6 @@ export async function insumos(rango: RangoDias) {
 }
 
 // ── 7 a 9. Balance: lo que entra por ventas, lo que sale en insumos y la ganancia ───────────────────
-
-const DIA_MS = 24 * 60 * 60 * 1000;
-
-function sumarDias(dia: string, dias: number): string {
-  return new Date(Date.parse(`${dia}T00:00:00Z`) + dias * DIA_MS).toISOString().slice(0, 10);
-}
 
 // El período de un día: el mismo día, el lunes de su semana (AAAA-MM-DD) o el mes (AAAA-MM)
 function periodoDe(dia: string, agrupar: Agrupacion): string {
