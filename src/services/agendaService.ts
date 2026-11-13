@@ -22,33 +22,25 @@ export interface RangoDeEntrega {
   /** El último */
   hasta: string;
   /**
-   * Los días del rango que la web no ofrece, en orden: los que el dueño marcó como «Agenda llena» y los que llegaron a
-   * sus productos por día (el tope)
+   * Los días del rango que la web no ofrece, en orden: SOLO los que el dueño marcó como «Agenda llena». Pasar el tope
+   * de productos por día no cierra un día solo (lo decidió el dueño el 2026-11-13: «eso lo hace el admin manualmente»)
    */
   diasLlenos: string[];
+  /**
+   * Los días que se están llenando (amarillos en la web, «Casi»): pasaron el 40 % de los productos por día, también los
+   * que llegaron o se pasaron del tope, y que el dueño no marcó. Se pueden elegir: dicen que hay trabajo ese día, no
+   * quién pidió ni cuánto. Sin productos por día no hay niveles, así que no hay ninguno
+   */
+  diasCasiLlenos: string[];
 }
 
-// Los días cerrados para el cliente: marcados por el dueño, o que llegaron al tope
-async function diasCerradosEntre(desde: string, hasta: string): Promise<string[]> {
-  const { dias } = await diasDelRango(desde, hasta);
-  return dias.filter((dia) => dia.llena || dia.tope).map((dia) => dia.fecha);
-}
-
-// Lo que el dueño eligió para cada día del rango: si lo marcó como «Agenda llena» y cuántos quiere hacer. Solo los
-// días que tocó
-async function elegidoEntre(desde: string, hasta: string) {
-  const dias = await Agenda.find({
-    _id: { $gte: desde, $lte: hasta },
-    $or: [{ llena: true }, { quiereHacer: { $exists: true } }],
-  })
-    .select('llena quiereHacer')
-    .lean();
-  return new Map(dias.map((dia) => [dia._id, { llena: dia.llena ?? false, quiereHacer: dia.quiereHacer ?? null }]));
-}
+const fechasConEstado = (dias: DiaAgenda[], estado: EstadoWeb) =>
+  dias.filter((dia) => dia.estadoWeb === estado).map((dia) => dia.fecha);
 
 // Los días que el cliente puede elegir para un carrito: desde mañana o pasado (según el producto que más demora) hasta
-// fin de mes, o hasta fin del mes siguiente si faltan 7 días o menos. Si todos los días del rango están cerrados
-// (marcados o en el tope), se suma el mes siguiente. La usan el carrito (para armar el calendario) y el pedido (para revisarlo): nunca difieren
+// fin de mes, o hasta fin del mes siguiente si faltan 7 días o menos. Si el dueño marcó todos los días del rango, se
+// suma el mes siguiente. La usan el carrito (para armar el calendario) y el pedido (para revisarlo): nunca difieren.
+// Los días del rango se consultan UNA vez y de ahí salen los llenos y los casi llenos (antes eran dos consultas iguales)
 export async function rangoDeEntrega(anticipacionHoras: number): Promise<RangoDeEntrega> {
   const hoy = hoyEnArgentina();
   const desde = sumarDias(hoy, diasDeAnticipacion(anticipacionHoras));
@@ -58,12 +50,17 @@ export async function rangoDeEntrega(anticipacionHoras: number): Promise<RangoDe
   // Por si un producto se encarga con tanta anticipación que el primer día cae después (hoy todos son de 24 o 48 hs)
   if (desde > hasta) hasta = finDeMes(desde);
 
-  let diasLlenos = await diasCerradosEntre(desde, hasta);
-  if (diasLlenos.length > diasEntre(desde, hasta)) {
+  let { dias } = await diasDelRango(desde, hasta);
+  if (fechasConEstado(dias, 'llena').length > diasEntre(desde, hasta)) {
     hasta = finDeMes(sumarDias(hasta, 1));
-    diasLlenos = await diasCerradosEntre(desde, hasta);
+    ({ dias } = await diasDelRango(desde, hasta));
   }
-  return { desde, hasta, diasLlenos };
+  return {
+    desde,
+    hasta,
+    diasLlenos: fechasConEstado(dias, 'llena'),
+    diasCasiLlenos: fechasConEstado(dias, 'casi'),
+  };
 }
 
 // El pedido de la web: la fecha tiene que estar en el rango y no estar marcada. Fuera del rango es 400 (la web tenía
@@ -75,21 +72,12 @@ export async function revisarFechaDelCliente(fecha: string, anticipacionHoras: n
   if (diasLlenos.includes(fecha)) throw new ErrorHttp(409, AGENDA_LLENA);
 }
 
-// Los días del rango que se están llenando (nivel medio: pasaron el 40 % del tope, sin llegar) y que el dueño no
-// marcó: la web los muestra en amarillo con «Casi», para que el cliente no lo deje para último momento. Se pueden
-// elegir. Sin los productos por día del dueño no hay niveles, así que no hay ninguno. Aparte de rangoDeEntrega: el
-// pedido no la necesita para revisar la fecha
-export async function diasCasiLlenos({ desde, hasta }: RangoDeEntrega): Promise<string[]> {
-  const { dias } = await diasDelRango(desde, hasta);
-  return dias.filter((dia) => !dia.llena && dia.nivel === 'medio').map((dia) => dia.fecha);
-}
-
 // ── La agenda del dueño ──────────────────────────────────────────────────────────────────────────────
 
 // Qué tan lleno está cada día contra los productos por día del dueño, que son su tope (lo pidió el dueño): bajo
 // («Libre», verde) hasta el 40 %; medio («Casi», amarillo) por arriba del 40 % sin llegar; alto («Llena», rojo) desde
-// el 100 %. Con 25: hasta 10 libre, de 11 a 24 casi, 25 o más llena. En el tope, la web deja de ofrecer el día solo,
-// como si el dueño lo hubiera marcado (el dueño puede seguir cargando pedidos a mano)
+// el 100 %. Con 25: hasta 10 libre, de 11 a 24 casi, 25 o más llena. El tope NO cierra el día: la web lo sigue
+// ofreciendo (como «Casi») hasta que el dueño lo marque con «Agenda llena» (lo decidió el dueño el 2026-11-13)
 export const NIVELES_AGENDA = ['bajo', 'medio', 'alto'] as const;
 export type NivelAgenda = (typeof NIVELES_AGENDA)[number];
 const HASTA_LIBRE = 40;
@@ -107,6 +95,18 @@ function nivelDe(productos: number, productosPorDia: number | null, quiereHacer:
   return porcentaje >= TOPE ? 'alto' : porcentaje > HASTA_LIBRE ? 'medio' : 'bajo';
 }
 
+// Cómo ve el día el cliente en la web (lo pidió el front el 2026-11-13: que la agenda del dueño lo traiga resuelto y no
+// haga cuentas, así su calendario y el de la web no se pueden separar). Es la MISMA cuenta que arma el carrito:
+// `llena` = lo marcó el dueño (lo único que bloquea); `casi` = nivel medio o alto (también en el tope o pasado, que no
+// cierra el día); `libre` = el resto. Vale para los días que la web ofrece (desde mañana o pasado hasta fin de mes)
+export const ESTADOS_WEB = ['libre', 'casi', 'llena'] as const;
+export type EstadoWeb = (typeof ESTADOS_WEB)[number];
+
+function estadoWebDe(llena: boolean, nivel: NivelAgenda | null): EstadoWeb {
+  if (llena) return 'llena';
+  return nivel === 'medio' || nivel === 'alto' ? 'casi' : 'libre';
+}
+
 export interface DiaAgenda {
   fecha: string;
   /** Pedidos no cancelados para ese día (también los pendientes sin seña y los manuales) */
@@ -119,8 +119,22 @@ export interface DiaAgenda {
   llena: boolean;
   /** Cuántos productos quiere hacer ese día, si eligió menos que los de siempre; null = los de siempre */
   quiereHacer: number | null;
-  /** Si llegó a los productos por día del dueño: la web tampoco lo ofrece, aunque no esté marcado */
+  /** Si llegó a los productos por día del dueño. Es solo para su agenda: la web lo sigue ofreciendo (como «Casi») */
   tope: boolean;
+  /** Cómo lo ve el cliente en la web: la misma cuenta que el carrito (estadoWebDe) */
+  estadoWeb: EstadoWeb;
+}
+
+// Lo que el dueño eligió para cada día del rango: si lo marcó como «Agenda llena» y cuántos quiere hacer. Solo los
+// días que tocó
+async function elegidoEntre(desde: string, hasta: string) {
+  const dias = await Agenda.find({
+    _id: { $gte: desde, $lte: hasta },
+    $or: [{ llena: true }, { quiereHacer: { $exists: true } }],
+  })
+    .select('llena quiereHacer')
+    .lean();
+  return new Map(dias.map((dia) => [dia._id, { llena: dia.llena ?? false, quiereHacer: dia.quiereHacer ?? null }]));
 }
 
 // Calculado al vuelo, sin contadores guardados: cancelar un pedido libera su lugar solo
@@ -140,7 +154,7 @@ async function diasDelRango(desde: string, hasta: string) {
     const { pedidos = 0, productos = 0 } = porDia.get(fecha) ?? {};
     const { llena = false, quiereHacer = null } = elegido.get(fecha) ?? {};
     const nivel = nivelDe(productos, productosPorDia, quiereHacer);
-    dias.push({ fecha, pedidos, productos, nivel, llena, quiereHacer, tope: nivel === 'alto' });
+    dias.push({ fecha, pedidos, productos, nivel, llena, quiereHacer, tope: nivel === 'alto', estadoWeb: estadoWebDe(llena, nivel) });
   }
   return { productosPorDia, dias };
 }

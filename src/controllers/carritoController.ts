@@ -48,8 +48,7 @@ export async function cotizar(req: Request, res: Response) {
   if (typeof cantidades === 'string') return res.status(400).json({ error: cantidades });
 
   const { items, noDisponibles, total, anticipacionHoras } = await carritoService.cotizar(cantidades);
-  const rango = await agendaService.rangoDeEntrega(anticipacionHoras);
-  const entrega = { ...rango, diasCasiLlenos: await agendaService.diasCasiLlenos(rango) };
+  const entrega = await agendaService.rangoDeEntrega(anticipacionHoras);
   res.json({
     items: items.map(({ producto, nombre, precio, cantidad, foto }) => ({
       productoId: String(producto),
