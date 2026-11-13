@@ -2,6 +2,7 @@ import { HydratedDocument, Types } from 'mongoose';
 import { Producto, SIN_MAYUSCULAS_NI_ACENTOS } from '../models/Producto';
 import { ITipo, Tipo } from '../models/Tipo';
 import { ErrorHttp } from '../utils/errores';
+import { olvidarCatalogo } from './productosService';
 
 const NO_ENCONTRADO = 'No encontrado';
 
@@ -48,6 +49,8 @@ export async function renombrar(id: string, nombre: string) {
     throw esNombreRepetido(e) ? await nombreRepetido(nombre) : e;
   }
   if (!tipo) throw new ErrorHttp(404, NO_ENCONTRADO);
+  // El nombre del tipo sale en la carta y en los filtros
+  olvidarCatalogo();
   return conCantidad(tipo, await Producto.countDocuments({ tipo: tipo._id }));
 }
 
@@ -57,4 +60,5 @@ export async function borrar(id: string) {
   const tipo = await Tipo.findByIdAndDelete(id);
   if (!tipo) throw new ErrorHttp(404, NO_ENCONTRADO);
   await Producto.updateMany({ tipo: tipo._id }, { $set: { tipo: null } });
+  olvidarCatalogo();
 }

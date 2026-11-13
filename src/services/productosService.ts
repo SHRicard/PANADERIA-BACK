@@ -14,6 +14,7 @@ import {
 import { Receta } from '../models/Receta';
 import { Tipo } from '../models/Tipo';
 import { ErrorHttp } from '../utils/errores';
+import { cacheEnMemoria } from '../utils/memoria';
 import { Paginado } from '../utils/paginado';
 import { regexSinAcentos } from '../utils/texto';
 
@@ -27,6 +28,12 @@ export type DatosRecomendacion = Omit<IRecomendacion, 'createdAt'>;
 
 // Todas las respuestas traen el tipo como { _id, nombre }: el producto guarda solo el id. Si lo borraron, sale null
 const CON_TIPO = { path: 'tipo', select: 'nombre' };
+
+// La carta, los filtros y el detalle de cada producto de la web, en memoria (los pide cada visita y cambian solo cuando
+// el dueño edita). ❌ Si sumás una escritura de productos o de tipos, llamá a olvidarCatalogo() después de guardar.
+// 300 claves: un detalle por producto más las combinaciones de filtros
+const catalogoEnMemoria = cacheEnMemoria<unknown>({ duracionMs: 5 * 60 * 1000, maxClaves: 300 });
+export const olvidarCatalogo = () => catalogoEnMemoria.olvidar();
 
 function borrarImagenes(imagenes: IImagen[]) {
   return Promise.all(imagenes.map((imagen) => borrarDeCloudinary(imagen.publicId)));
@@ -107,6 +114,7 @@ async function guardarConImagenes(producto: HydratedDocument<IProducto>, buffers
     await borrarImagenes(subidas);
     throw esNombreRepetido(e) ? nombreRepetido() : e;
   }
+  olvidarCatalogo();
   return producto.populate(CON_TIPO);
 }
 
@@ -137,22 +145,36 @@ export async function listar(filtros: FiltrosProductos, { pagina, limite }: Pagi
   const filtro = filtroDe(filtros);
 
   const [encontrados, totalProductos] = await Promise.all([
-    Producto.aggregate<IProducto>([
+    Producto.aggregate<Omit<IProducto, 'tipo'> & { tipo: TipoDeSeccion | null }>([
       { $match: filtro },
       { $addFields: { ordenCategoria: ORDEN_CATEGORIA } },
       { $sort: { ordenCategoria: 1, nombre: 1, _id: 1 } },
       { $skip: (pagina - 1) * limite },
       { $limit: limite },
+      // El tipo en la misma consulta (después del $limit: solo los de la página), como listarSecciones. Antes era un
+      // populate aparte: otro viaje a Mongo, uno detrás del otro
+      {
+        $lookup: {
+          from: Tipo.collection.name,
+          localField: 'tipo',
+          foreignField: '_id',
+          pipeline: [{ $project: { nombre: 1 } }],
+          as: 'tipo',
+        },
+      },
+      // Si el tipo ya no existe, null (lo mismo que daba el populate)
+      { $set: { tipo: { $ifNull: [{ $first: '$tipo' }, null] } } },
       // Las recomendaciones van solo en el detalle: en la lista alcanza con puntajePromedio y cantidadRecomendaciones
       { $project: { ordenCategoria: 0, 'imagenes.publicId': 0, recomendaciones: 0 } },
     ]).collation(SIN_MAYUSCULAS_NI_ACENTOS), // "árbol" junto a "Arroz", no después de la Z
     Producto.countDocuments(filtro),
   ]);
   // hydrate: para que cada foto salga con el toJSON del esquema ({ id, url, miniatura }).
-  // Con la proyección no le pone "recomendaciones: []" por defecto, que haría parecer que no tiene
-  const productos = encontrados.map((producto) => Producto.hydrate(producto, { recomendaciones: 0 }));
-  // Los tipos de toda la página, en una sola consulta
-  await Producto.populate(productos, CON_TIPO);
+  // Con la proyección no le pone "recomendaciones: []" por defecto, que haría parecer que no tiene.
+  // hydratedPopulatedDocs: el tipo que trajo el $lookup sale como si estuviera populado ({ _id, nombre })
+  const productos = encontrados.map((producto) =>
+    Producto.hydrate(producto, { recomendaciones: 0 }, { hydratedPopulatedDocs: true })
+  );
   return {
     productos,
     pagina,
@@ -176,7 +198,14 @@ export interface Seccion {
 // La carta de la web: todos los que coinciden, sin paginar, agrupados por tipo. Es UNA consulta: el $lookup trae el
 // tipo de cada producto y Mongo los ordena por su nombre (con la collation, como GET /api/tipos), los sin tipo al
 // final, y dentro de cada tipo como listar. Acá solo se cortan en secciones
-export async function listarSecciones(filtros: FiltrosProductos): Promise<Seccion[]> {
+export function listarSecciones(filtros: FiltrosProductos): Promise<Seccion[]> {
+  // Una búsqueda no se guarda: el texto es libre y llenaría la memoria de combinaciones que no se repiten
+  if (filtros.buscar) return calcularSecciones(filtros);
+  const clave = JSON.stringify(['secciones', filtros.categoria, filtros.tipo, filtros.disponible]);
+  return catalogoEnMemoria.obtener(clave, () => calcularSecciones(filtros)) as Promise<Seccion[]>;
+}
+
+async function calcularSecciones(filtros: FiltrosProductos): Promise<Seccion[]> {
   const encontrados = await Producto.aggregate<Omit<IProducto, 'tipo'> & { tipo: TipoDeSeccion | null }>([
     { $match: filtroDe(filtros) },
     {
@@ -226,7 +255,14 @@ export async function contarPorCategoria() {
 // así al elegir uno los demás siguen apareciendo). La `cantidad` de cada uno cuenta con el OTRO filtro puesto: con el
 // tipo Pizzas, cada gusto dice cuántas pizzas tiene (antes decía las de todo el catálogo y se podía elegir una
 // combinación vacía). `totales`: lo de la opción «Todos» de cada uno, también con el otro filtro
-export async function opcionesDeFiltros({ tipo, categoria }: Pick<FiltrosProductos, 'tipo' | 'categoria'> = {}) {
+export function opcionesDeFiltros({ tipo, categoria }: Pick<FiltrosProductos, 'tipo' | 'categoria'> = {}) {
+  const clave = JSON.stringify(['filtros', tipo, categoria]);
+  return catalogoEnMemoria.obtener(clave, () => calcularOpcionesDeFiltros({ tipo, categoria })) as ReturnType<
+    typeof calcularOpcionesDeFiltros
+  >;
+}
+
+async function calcularOpcionesDeFiltros({ tipo, categoria }: Pick<FiltrosProductos, 'tipo' | 'categoria'>) {
   const conGusto = { disponible: true, ...(categoria && { categoria }) };
   const conTipo = { disponible: true, ...(tipo && { tipo }) };
   const [tiposConProductos, categoriasConProductos, tiposDelGusto, gustosDelTipo, totalTipos, totalCategorias] =
@@ -272,8 +308,11 @@ export async function obtener(id: string) {
 }
 
 // Para el catálogo público: solo si está activo
+// El detalle de la web (GET /api/catalogo/:id), también en memoria: lo abre cada cliente que toca un producto
 export async function obtenerDisponible(id: string) {
-  const producto = await Producto.findOne({ _id: id, disponible: true }).select('-imagenes.publicId').populate(CON_TIPO);
+  const producto = await (catalogoEnMemoria.obtener(JSON.stringify(['detalle', id]), () =>
+    Producto.findOne({ _id: id, disponible: true }).select('-imagenes.publicId').populate(CON_TIPO)
+  ) as Promise<HydratedDocument<IProducto> | null>);
   if (!producto) throw new ErrorHttp(404, 'No encontrado');
   return producto;
 }
@@ -319,6 +358,7 @@ export async function agregarImagen(id: string, buffer: Buffer) {
     await borrarDeCloudinary(imagen.publicId);
     throw await errorSinLugar(id);
   }
+  olvidarCatalogo();
   return producto.imagenes[0];
 }
 
@@ -345,12 +385,14 @@ export async function hacerPortada(id: string, imagenId: string) {
     { returnDocument: 'after', updatePipeline: true }
   ).populate(CON_TIPO);
   if (!producto) throw new ErrorHttp(404, 'No encontrado');
+  olvidarCatalogo();
   return producto;
 }
 
 export async function borrar(id: string) {
   const producto = await Producto.findByIdAndDelete(id);
   if (!producto) throw new ErrorHttp(404, 'No encontrado');
+  olvidarCatalogo();
   // Su receta no sirve sin el producto
   await Receta.deleteOne({ producto: producto._id });
   await borrarImagenes(producto.imagenes);
@@ -364,6 +406,7 @@ export async function borrarImagen(id: string, imagenId: string) {
   if (!imagen) throw new ErrorHttp(404, 'No encontrado');
 
   await Producto.updateOne({ _id: id }, { $pull: { imagenes: { _id: imagenId } } });
+  olvidarCatalogo();
   await borrarDeCloudinary(imagen.publicId);
 }
 
@@ -405,6 +448,8 @@ export async function agregarRecomendacion(id: string, datos: DatosRecomendacion
     }
   );
   if (!producto) throw new ErrorHttp(404, 'No encontrado');
+  // El puntaje promedio sale en la carta
+  olvidarCatalogo();
   return {
     recomendacion: producto.recomendaciones[0],
     puntajePromedio: producto.puntajePromedio,
@@ -431,4 +476,5 @@ export async function borrarRecomendacion(id: string, recomendacionId: string) {
     { updatePipeline: true, timestamps: false }
   );
   if (resultado.matchedCount === 0) throw new ErrorHttp(404, 'No encontrado');
+  olvidarCatalogo();
 }

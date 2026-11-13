@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import express, { NextFunction, Request, Response } from 'express';
+import compression from 'compression';
 import cors from 'cors';
 import helmet from 'helmet';
 import mongoose from 'mongoose';
@@ -17,6 +18,7 @@ import catalogoRoutes from './routes/catalogo';
 import clientesRoutes from './routes/clientes';
 import datosPagoRoutes from './routes/datosPago';
 import insumosRoutes from './routes/insumos';
+import logsRoutes from './routes/logs';
 import metricasRoutes from './routes/metricas';
 import pedidosRoutes from './routes/pedidos';
 import productosRoutes from './routes/productos';
@@ -58,6 +60,10 @@ app.use(
   })
 );
 
+// Comprime (gzip) las respuestas de más de 1 KB: la carta pasa de ~51 KB a ~6 KB, que en el celular con datos se nota.
+// Antes de todas las rutas, así vale para todas; las chicas (/health, los errores) van tal cual
+app.use(compression());
+
 // Van antes del express.json() global: traen su propio parser con límite de 10kb para las rutas públicas
 app.use('/api/pedidos', pedidosRoutes);
 app.use('/api/carrito', carritoRoutes);
@@ -81,6 +87,7 @@ app.use('/api/almacenamiento', almacenamientoRoutes);
 app.use('/api/metricas', metricasRoutes);
 app.use('/api/resumen', resumenRoutes);
 app.use('/api/agenda', agendaRoutes);
+app.use('/api/logs', logsRoutes);
 
 // Manejo de errores (incluye errores de multer, de Cloudinary, de Mongoose y del parser de JSON)
 app.use((err: Error & { status?: number; type?: string }, _req: Request, res: Response, _next: NextFunction) => {

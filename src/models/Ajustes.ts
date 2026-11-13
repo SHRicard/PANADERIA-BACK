@@ -1,4 +1,5 @@
 import { Schema, model } from 'mongoose';
+import { DIAS_LOGS } from './Log';
 
 // Cómo se ve el catálogo público, en el orden en que los muestra la app del dueño
 export const ESTILOS_CATALOGO = ['vidriera', 'carta', 'dia-navidad', 'noche-navidad'] as const;
@@ -42,7 +43,13 @@ export const AJUSTES_POR_DEFECTO: IAjustes = {
 // con upsert) no pueden crear dos documentos, porque el _id es único
 export const ID_AJUSTES = 'web';
 
-const ajustesSchema = new Schema<IAjustes & { _id: string }>(
+// Cada cuántos días se borran solos los logs (logsService). Va en este documento pero NO es de la web: es privado,
+// no está en IAjustes y no sale en GET /api/ajustes (ajustesService.datos arma la respuesta campo por campo)
+export interface IAjustesPrivados {
+  diasLogs?: number | null;
+}
+
+const ajustesSchema = new Schema<IAjustes & IAjustesPrivados & { _id: string }>(
   {
     _id: { type: String },
     estiloCatalogo: { type: String, enum: ESTILOS_CATALOGO, default: AJUSTES_POR_DEFECTO.estiloCatalogo },
@@ -62,6 +69,7 @@ const ajustesSchema = new Schema<IAjustes & { _id: string }>(
       validate: { validator: (valor: number | null) => valor === null || Number.isInteger(valor), message: PRODUCTOS_POR_DIA_INVALIDO },
     },
     tema: { type: String, enum: TEMAS, default: AJUSTES_POR_DEFECTO.tema },
+    diasLogs: { type: Number, enum: [...DIAS_LOGS, null], default: null },
   },
   { timestamps: true }
 );
