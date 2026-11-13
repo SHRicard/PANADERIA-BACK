@@ -11,6 +11,7 @@ export const ORIGENES_PEDIDO = ['web', 'manual'] as const;
 export type OrigenPedido = (typeof ORIGENES_PEDIDO)[number];
 
 export const FECHA_ENTREGA_INVALIDA = 'La fecha de entrega tiene que ser un día AAAA-MM-DD';
+export const FALTA_FECHA_ENTREGA = 'Falta elegir el día de entrega';
 
 /** La seña que transfirió el cliente. La confirma el dueño desde la app cuando ve la plata */
 export interface ISena {
@@ -40,9 +41,9 @@ export interface IPedido {
   conEnvio: boolean;
   /**
    * Para qué día es (AAAA-MM-DD). Lo elige el cliente en la web (con las reglas de agendaService) o el dueño (libre).
-   * Opcional solo mientras dura la transición: los pedidos de antes no lo tienen hasta correr migrar-fecha-entrega
+   * Los pedidos de antes de la agenda la recibieron con npm run migrar-fecha-entrega
    */
-  fechaEntrega?: string;
+  fechaEntrega: string;
   nota?: string;
   /** Solo si el dueño confirmó la seña */
   sena?: ISena;
@@ -110,10 +111,10 @@ const pedidoSchema = new Schema<IPedido>(
     // al hidratar, y pedidosService.completar en las lecturas con lean)
     conEnvio: { type: Boolean, default: false },
     // Un día de calendario como texto, igual que Insumo.fecha: como Date se correría un día al mostrarlo en Argentina.
-    // ⚠️ Transición: opcional hasta que la web y la app la manden siempre y se corra npm run migrar-fecha-entrega en las
-    // dos bases. Recién después pasa a required (si no, los pedidos sin fecha no pasan la validación al guardarlos)
+    // Obligatoria desde que se corrió npm run migrar-fecha-entrega en las dos bases (2026-11-13)
     fechaEntrega: {
       type: String,
+      required: [true, FALTA_FECHA_ENTREGA],
       validate: { validator: esFechaValida, message: FECHA_ENTREGA_INVALIDA },
     },
     nota: { type: String, trim: true, maxlength: 300 },
