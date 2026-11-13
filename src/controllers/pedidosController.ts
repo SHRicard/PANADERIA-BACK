@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import { isValidObjectId } from 'mongoose';
-import { ESTADOS_PEDIDO, EstadoPedido, FECHA_ENTREGA_INVALIDA } from '../models/Pedido';
+import { ESTADOS_PEDIDO, EstadoPedido, FALTA_FECHA_ENTREGA, FECHA_ENTREGA_INVALIDA } from '../models/Pedido';
 import * as pedidosService from '../services/pedidosService';
 import { esFechaValida } from '../utils/fecha';
 import { leerPaginado } from '../utils/paginado';
@@ -44,10 +44,10 @@ function leerPedido(body: unknown): pedidosService.DatosPedido | string {
   const conEnvio = body.conEnvio ?? false;
   if (typeof conEnvio !== 'boolean') return 'conEnvio tiene que ser true (con envío) o false (lo pasa a retirar)';
 
-  // ⚠️ Transición: opcional mientras la web y la app de antes no la mandan. Cuando las dos estén actualizadas (y se
-  // haya corrido migrar-fecha-entrega), sin fecha pasa a ser un 400. Las reglas del cliente las revisa el servicio
-  const fechaEntrega = body.fechaEntrega ?? undefined;
-  if (fechaEntrega !== undefined && !esFechaEntrega(fechaEntrega)) return FECHA_ENTREGA_INVALIDA;
+  // Obligatoria: todo pedido es para un día. Las reglas del cliente (anticipación, tope, días cerrados) las revisa el servicio
+  const fechaEntrega: unknown = body.fechaEntrega;
+  if (fechaEntrega === undefined || fechaEntrega === null) return FALTA_FECHA_ENTREGA;
+  if (!esFechaEntrega(fechaEntrega)) return FECHA_ENTREGA_INVALIDA;
 
   // Los productos repetidos se juntan en un solo item sumando las cantidades (las mismas reglas que el carrito)
   const cantidades = leerItems(body.items, { minimo: 1, fueraDeRango: ITEMS_FUERA_DE_RANGO });
@@ -82,7 +82,7 @@ export async function crear(req: Request, res: Response) {
     total: pedido.total,
     estado: pedido.estado,
     conEnvio: pedido.conEnvio,
-    fechaEntrega: pedido.fechaEntrega ?? null,
+    fechaEntrega: pedido.fechaEntrega,
     createdAt: pedido.createdAt,
   });
 }
