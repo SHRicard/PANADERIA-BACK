@@ -19,6 +19,8 @@ Node.js + TypeScript + Express + MongoDB (Mongoose) + Cloudinary + login con JWT
    - (Opcional) Cargar 10 productos de ejemplo para probar el catálogo: `npm run sembrar`. Copia las fotos de los productos que ya tengan fotos (hace falta al menos uno) y saltea los nombres que ya existen, así que se puede correr más de una vez. Para sacarlos, se eliminan desde la app como cualquier producto (se borran también sus fotos).
    - (Opcional) Cargar clientes, pedidos e insumos de ejemplo para probar el inicio, la lista de pedidos y las métricas: `npm run sembrar-pedidos`. Arma unos 140 pedidos de los últimos 60 días hasta hoy (con señas, entregas, cancelaciones y cargados a mano) con los productos que ya hay y su precio de hoy, 18 clientes (algunos piden seguido) y 6 insumos con sus compras. No toca los clientes ni los pedidos que ya había. Si ya se corrió, no hace nada: `npm run sembrar-pedidos -- --rehacer` borra esos clientes y sus pedidos y los vuelve a armar con las fechas corridas a hoy (los insumos que ya existen se saltean). No corre contra la base de producción (`panaderia-producion`). Los teléfonos de ejemplo (11 5555-0001 en adelante) son de mentira: no les escribas.
    - Si la base tiene productos de antes de la anticipación: `npm run migrar-anticipacion` les pone 24 hs. Sin eso no se pueden editar. Solo toca los que no la tienen, así que se puede correr más de una vez.
+   - Si trajiste el catálogo de producción a la demo (con `mongodump`/`mongorestore`), sus fotos siguen en el Cloudinary de producción: `npm run copiar-fotos` las sube a la cuenta del `.env` y les cambia la URL. Solo toca las que son de otra cuenta, así que se puede correr más de una vez. No corre contra la base de producción.
+   - Si la base tiene pedidos de antes de la agenda: `npm run migrar-fecha-entrega` les pone fecha de entrega (ver [Agenda](#agenda)). Solo toca los que no la tienen, así que se puede correr más de una vez.
 4. Levantar con `./run.sh`: revisa Node, dependencias (las instala si faltan), las variables del `.env`, la conexión a MongoDB, a Cloudinary y al SMTP, que exista el usuario admin (y que tenga email) y que el puerto esté libre. Si todo está bien, arranca en desarrollo (http://localhost:3000). Nunca imprime los valores del `.env`.
    - `./run.sh prod`: compila y corre lo compilado, como en Render.
    - `./run.sh check`: solo revisa, no levanta nada.
@@ -43,17 +45,17 @@ Node.js + TypeScript + Express + MongoDB (Mongoose) + Cloudinary + login con JWT
 | GET    | `/api/catalogo`                     | Productos activos, paginados (ver [Listas paginadas y filtros](#listas-paginadas-y-filtros)). Cada uno trae `portada` (miniatura de la primera foto, o `null`) y `cantidadImagenes`, sin el array de fotos, y `puntajePromedio` y `cantidadRecomendaciones` sin las recomendaciones |
 | GET    | `/api/catalogo/categorias`          | Los gustos (la lista fija de categorías), en orden: `[{ "nombre": "Dulce", "cantidad": 5 }, …]` (`cantidad` = productos activos)                                                                                                                                                    |
 | GET    | `/api/catalogo/secciones`           | **La carta, agrupada por tipo**: todos los activos que coinciden, sin paginar (`?tipo=`, `?categoria=`, `?buscar=`, combinables). Secciones por nombre del tipo; los sin tipo, al final con `"tipo": null` (ver [Carta y filtros de la web](#carta-y-filtros-de-la-web)) |
-| GET    | `/api/catalogo/filtros`             | Las opciones de los filtros de la web: los tipos y los gustos con al menos un producto activo, con su `cantidad` (sin aplicar filtros) |
+| GET    | `/api/catalogo/filtros`             | Las opciones de los filtros de la web: los tipos y los gustos con al menos un producto activo, con su `cantidad` contada con el otro filtro puesto (`?tipo=`, `?categoria=`) |
 | GET    | `/api/catalogo/:id`                 | Detalle de un producto activo, con todas sus fotos (`imagenes: [{ id, url, miniatura }]`) y sus recomendaciones (ver [Recomendaciones](#recomendaciones))                                                                                                                           |
 | POST   | `/api/catalogo/:id/recomendaciones` | Dejar una recomendación sin login: `{ "puntaje": 5, "texto": "...", "autor": "..." }`. Solo productos activos. Máx. 10 por hora por IP y body de hasta 10kb                                                                                                                         |
-| GET    | `/api/ajustes`                      | Lo que eligió el dueño para la web: `{ "estiloCatalogo": "vidriera" \| "carta", "cerrado": false, "mensajeCerrado": "" }`. Sin cambios guardados, responde los de por defecto (`carta`, abierto, sin mensaje). Con `cerrado: true`, `POST /api/pedidos` responde `409` |
+| GET    | `/api/ajustes`                      | Lo que eligió el dueño para la web: `{ "estiloCatalogo": "vidriera" \| "carta" \| "dia-navidad" \| "noche-navidad", "cerrado": false, "mensajeCerrado": "", "productosPorDia": null, "tema": "claro" \| "oscuro" }`. `tema` es el de la app del dueño: la web se pinta igual (por defecto, `claro`). Sin cambios guardados, responde los de por defecto (`carta`, abierto, sin mensaje, sin productos por día). Con `cerrado: true`, `POST /api/pedidos` responde `409`. `productosPorDia` es la referencia de la [agenda](#agenda) del dueño: la web no la usa |
 | GET    | `/api/datos-pago`                   | Los datos para transferirle al dueño, que la web le muestra al cliente después del pedido: `{ "nombreCompleto", "alias", "cbu", "billetera" }`. Si el dueño todavía no los cargó, `404`                                                                                             |
-| POST   | `/api/carrito`                      | Cotizar el carrito: `{ "items": [{ "productoId": "...", "cantidad": 2 }] }` → precios actuales, subtotales, total y los productos que ya no están disponibles. No guarda nada (el carrito vive en el navegador). Máx. 100 cada 10 minutos por IP y body de hasta 10kb               |
-| POST   | `/api/pedidos`                      | Hacer un pedido sin login (JSON, ver abajo). Máx. 10 por hora por IP y body de hasta 10kb                                                                                                                                                                                           |
+| POST   | `/api/carrito`                      | Cotizar el carrito: `{ "items": [{ "productoId": "...", "cantidad": 2 }] }` → precios actuales, subtotales, total, los productos que ya no están disponibles y los **días que puede elegir** para la entrega (`entrega`, ver [Agenda](#agenda)). No guarda nada (el carrito vive en el navegador). Máx. 300 cada 10 minutos por IP y body de hasta 10kb               |
+| POST   | `/api/pedidos`                      | Hacer un pedido sin login (JSON, ver abajo). Máx. 30 pedidos **creados** por hora por IP (los rechazados no cuentan) y 150 intentos por hora, y body de hasta 10kb                                                                                                                                                                                           |
 
-Body de `POST /api/pedidos`: `{ "cliente": { "nombre": "...", "telefono": "..." }, "items": [{ "productoId": "...", "cantidad": 2 }], "nota": "...", "conEnvio": true }`. `conEnvio` es si quiere que se lo manden (`true`) o lo pasa a retirar (`false`); es opcional y sin él queda `false` (cualquier otro valor que no sea `true`, `false` o `null`: `400`). El precio y el total los calcula el servidor; lo que mande el cliente se ignora. Responde `201` con `{ id, items, total, estado, conEnvio, createdAt }`, sin datos de clientes. El total sale de la misma cuenta que `POST /api/carrito`, así que coincide con lo que el cliente vio en el carrito.
+Body de `POST /api/pedidos`: `{ "cliente": { "nombre": "...", "telefono": "..." }, "items": [{ "productoId": "...", "cantidad": 2 }], "fechaEntrega": "2026-11-25", "nota": "...", "conEnvio": true, "intento": "8f3c…" }`. `intento` (opcional, de 16 a 64 letras, números o guiones) es una clave al azar que arma la web para cada intento de confirmar: si el mismo `intento` llega dos veces (dos toques a la vez, o se cortó la conexión después de guardarlo y el cliente volvió a confirmar), responde el pedido que ya estaba, sin crear otro. `fechaEntrega` es el día para el que lo quiere (`AAAA-MM-DD`): tiene que ser uno de los que ofrece `POST /api/carrito` (si no, `400` con el motivo; si el dueño lo marcó como lleno, `409`). ⚠️ Mientras dure la transición es opcional (la web de antes no la manda): ver [Agenda](#agenda). `conEnvio` es si quiere que se lo manden (`true`) o lo pasa a retirar (`false`); es opcional y sin él queda `false` (cualquier otro valor que no sea `true`, `false` o `null`: `400`). El precio y el total los calcula el servidor; lo que mande el cliente se ignora. Responde `201` con `{ id, items, total, estado, conEnvio, fechaEntrega, createdAt }`, sin datos de clientes. El total sale de la misma cuenta que `POST /api/carrito`, así que coincide con lo que el cliente vio en el carrito.
 
-Respuesta de `POST /api/carrito`: `{ "items": [{ "productoId", "nombre", "precio", "cantidad", "subtotal", "portada" }], "noDisponibles": ["..."], "cantidadTotal": 3, "total": 28000 }`. Los productos pausados o eliminados no son un error: vuelven en `noDisponibles` y no suman. Acepta un carrito vacío (total `0`) y las mismas reglas de ítems que el pedido (hasta 30 productos, cantidades enteras de 1 a 50, los repetidos se suman).
+Respuesta de `POST /api/carrito`: `{ "items": [{ "productoId", "nombre", "precio", "cantidad", "subtotal", "portada" }], "noDisponibles": ["..."], "cantidadTotal": 3, "total": 28000, "entrega": { "desde": "2026-11-12", "hasta": "2026-11-30", "diasLlenos": ["2026-11-20"], "diasCasiLlenos": ["2026-11-18"] } }`. Los productos pausados o eliminados no son un error: vuelven en `noDisponibles` y no suman. Acepta un carrito vacío (total `0`) y las mismas reglas de ítems que el pedido (hasta 30 productos, cantidades enteras de 1 a 50, los repetidos se suman).
 
 ### Login y recuperación de contraseña (públicos)
 
@@ -85,9 +87,10 @@ Respuesta de `POST /api/carrito`: `{ "items": [{ "productoId", "nombre", "precio
 | PATCH  | `/api/promos/:id`                                     | Editar `titulo` y `texto` sin volver a subir el archivo (JSON). `texto` `null` o `""` lo borra |
 | POST   | `/api/promos/:id/publicaciones`                       | Registrar que el dueño la compartió: suma 1 a `vecesPublicada` y guarda `ultimaPublicacion`. Responde la promo |
 | DELETE | `/api/promos/:id`                                     | Borrar la promo (también su archivo en Cloudinary). Responde `204` |
-| GET    | `/api/pedidos`                                        | Pedidos, del más nuevo al más viejo (`?estado=pendiente`, `?pagina=1`, `?limite=20`, máx. 100). Cada uno con su `saldo` y su `origen` (ver abajo)                                                                                             |
+| GET    | `/api/pedidos`                                        | Pedidos, del más nuevo al más viejo (`?estado=pendiente`, `?fechaEntrega=2026-11-25` para los de un día de la agenda, `?pagina=1`, `?limite=20`, máx. 100). Cada uno con su `saldo` y su `origen` (ver abajo)                                                                                             |
 | GET    | `/api/pedidos/:id`                                    | Detalle de un pedido con los datos del cliente, su cantidad de pedidos el `saldo` y el `origen`                                                                                                                                             |
-| POST   | `/api/pedidos/manuales`                               | Cargar un pedido que le hicieron al dueño por fuera de la web (WhatsApp, en persona). Mismo body que el pedido público (también `conEnvio`), más `"sena": { "monto": 35000 }` opcional. Responde `201` con el detalle (ver abajo) |
+| POST   | `/api/pedidos/manuales`                               | Cargar un pedido que le hicieron al dueño por fuera de la web (WhatsApp, en persona). Mismo body que el pedido público (también `conEnvio` y `fechaEntrega`, pero cualquier día: sin las reglas de la agenda), más `"sena": { "monto": 35000 }` opcional. Responde `201` con el detalle (ver abajo) |
+| PUT    | `/api/pedidos/:id/fecha-entrega`                      | Cambiar el día de entrega (el cliente pidió otro día): `{ "fechaEntrega": "2026-11-26" }`. Cualquier día, también uno marcado como lleno. Solo pedidos `pendiente` o `confirmado` (si no, `409`). Responde el detalle |
 | PUT    | `/api/pedidos/:id/items`                              | Cambiar los productos de un pedido abierto (el cliente pidió sumar, sacar o cambiar algo): `{ "items": [{ "productoId": "...", "cantidad": 2 }] }`, la lista **completa**. Responde el detalle (ver [Editar un pedido](#editar-un-pedido)) |
 | PUT    | `/api/pedidos/:id/sena`                               | Confirmar la seña: `{ "monto": 35000 }` (de 0 hasta el total; `0` = confirmado **sin seña**). Pasa a `confirmado`. Otra vez sobre un pedido confirmado, corrige el monto. Responde el detalle                                       |
 | DELETE | `/api/pedidos/:id/sena`                               | Quitar la seña (por si se confirmó por error): vuelve a `pendiente`. Responde el detalle                                                                                                                                        |
@@ -101,7 +104,7 @@ Respuesta de `POST /api/carrito`: `{ "items": [{ "productoId", "nombre", "precio
 | DELETE | `/api/pedidos/:id/envio`                              | Lo pasa a retirar: `conEnvio: false`. Las mismas reglas. Responde el detalle |
 | GET    | `/api/clientes`                                       | Clientes con su cantidad de pedidos y la fecha del último                                                                                                                                                                       |
 | GET    | `/api/clientes/:id`                                   | Un cliente con sus últimos 20 pedidos                                                                                                                                                                                           |
-| PATCH  | `/api/ajustes`                                        | Cambiar los ajustes de la web: `{ "estiloCatalogo"?, "cerrado"?, "mensajeCerrado"? }` (el mensaje, hasta 280 letras). Solo cambia lo que viene; un valor fuera de la lista da `400`. Responde los ajustes completos |
+| PATCH  | `/api/ajustes`                                        | Cambiar los ajustes de la web: `{ "estiloCatalogo"?, "cerrado"?, "mensajeCerrado"?, "productosPorDia"?, "tema"? }` (el estilo, `vidriera`, `carta`, `dia-navidad` o `noche-navidad`; el mensaje, hasta 280 letras; `productosPorDia`, un entero de 1 a 1000 o `null` para sacarlo; `tema`, `claro` u `oscuro`: lo manda la app al cambiar el tema y la web lo usa para todos). Solo cambia lo que viene; un valor fuera de la lista da `400`. Responde los ajustes completos |
 | PUT    | `/api/datos-pago`                                     | Cargar o reemplazar los datos de pago (ver abajo). Responde los datos guardados                                                                                                                                                 |
 | DELETE | `/api/datos-pago`                                     | Borrar los datos de pago: la web deja de mostrarlos. Responde `204` (`404` si no había)                                                                                                                                         |
 | GET    | `/api/insumos`                                        | Los insumos (harina, manteca…), por nombre, con el precio y la fecha de la última compra. Sin el historial |
@@ -127,8 +130,13 @@ Respuesta de `POST /api/carrito`: `{ "items": [{ "productoId", "nombre", "precio
 | GET    | `/api/metricas/insumos`                               | **En qué insumos se gastó más** y **cuánto aumentó cada uno** respecto de la compra anterior |
 | GET    | `/api/metricas/balance`                               | **Lo que entra por ventas, lo que sale en insumos y la ganancia**, con la serie por día, semana o mes (`?agrupar=dia\|semana\|mes`, por defecto `mes`) |
 | GET    | `/api/resumen`                                        | **Lo de hoy** para el inicio de la app: cuántos pedidos se hicieron hoy y cuánto suman, cuántos siguen abiertos (esperando la seña o con la seña pagada) y los últimos 10 de hoy (ver [Resumen del día](#resumen-del-día)) |
+| GET    | `/api/agenda`                                         | **La agenda del mes** (`?mes=2026-11`, sin él el de hoy): cada día con sus pedidos, sus productos, el color del punto y si está marcado como lleno (ver [Agenda](#agenda)) |
+| PUT    | `/api/agenda/:fecha/cierre`                           | **«Agenda llena»**: la web deja de ofrecer ese día (`/api/agenda/2026-11-25/cierre`). Marcarlo otra vez no es un error. Responde el día |
+| DELETE | `/api/agenda/:fecha/cierre`                           | Volver a abrir ese día. Desmarcarlo otra vez no es un error. Responde el día |
+| PUT    | `/api/agenda/:fecha/quiere-hacer`                     | **Un día que quiere hacer menos**: `{ "quiereHacer": 3 }` (entero de 1 a 1000). Lo que le falta para llegar a `productosPorDia` se cuenta como ocupado (ver [Agenda](#agenda)). Responde el día |
+| DELETE | `/api/agenda/:fecha/quiere-hacer`                     | Ese día vuelve a los productos de siempre. Responde el día |
 
-Campos de producto: `nombre` (obligatorio y **único**: no puede haber dos productos con el mismo nombre, sin importar mayúsculas, acentos ni espacios de más; si se repite, `409` "Ya existe un producto con ese nombre: «…»"), `precio` (obligatorio, mayor que 0), `categoria` (obligatoria: el **gusto**, uno de la lista fija), `anticipacionHoras` (obligatoria: con cuántas horas de anticipación hay que encargarlo, entero de 0 a 720; `0` = se puede pedir en el momento. Es informativa: se muestra en el catálogo y el pedido no la controla), `descripcion`, `etiqueta` (texto libre de hasta 30 caracteres para destacarlo en el catálogo, por ejemplo "Nuevo", "Promo lanzamiento" o "El más elegido"), `ingredientes` (JSON `["harina","sal"]` o texto `harina, sal`), `pesoGramos` (mayor que 0), `tipo` (opcional: el `_id` de uno de los [tipos](#tipos)), `disponible` (`true` = activo, `false` = pausado) e `imagenes` (hasta 10 archivos por request, solo imágenes, máx. 10 MB cada uno). `descripcion`, `etiqueta`, `pesoGramos` y `tipo` son opcionales: mandarlos vacíos (`null` en JSON o `""`) los borra.
+Campos de producto: `nombre` (obligatorio y **único**: no puede haber dos productos con el mismo nombre, sin importar mayúsculas, acentos ni espacios de más; si se repite, `409` "Ya existe un producto con ese nombre: «…»"), `precio` (obligatorio, mayor que 0), `categoria` (obligatoria: el **gusto**, uno de la lista fija), `anticipacionHoras` (obligatoria: con cuántas horas de anticipación hay que encargarlo, entero de 0 a 720. Se muestra en el catálogo y marca el primer día que el cliente puede elegir en la web: 24 hs = mañana, 48 hs = pasado, nunca hoy; ver [Agenda](#agenda)), `descripcion`, `etiqueta` (texto libre de hasta 30 caracteres para destacarlo en el catálogo, por ejemplo "Nuevo", "Promo lanzamiento" o "El más elegido"), `ingredientes` (JSON `["harina","sal"]` o texto `harina, sal`), `pesoGramos` (mayor que 0), `tipo` (opcional: el `_id` de uno de los [tipos](#tipos)), `disponible` (`true` = activo, `false` = pausado) e `imagenes` (hasta 10 archivos por request, solo imágenes, máx. 10 MB cada uno). `descripcion`, `etiqueta`, `pesoGramos` y `tipo` son opcionales: mandarlos vacíos (`null` en JSON o `""`) los borra.
 
 ### Promos
 
@@ -296,6 +304,109 @@ Lo que ve el dueño al abrir la app (el inicio). Es privado y se calcula al vuel
 - `abiertos`: los pedidos que siguen `pendiente` (esperando la seña) o `confirmado` (con la seña pagada, para entregar), **de cualquier día**.
 - `ultimosPedidos`: los pedidos de hoy (sin los cancelados), del más nuevo al más viejo, **hasta 10** (si `hoy.pedidos` es más, el resto se ve en `GET /api/pedidos`). Cada uno igual que en `GET /api/pedidos`, con su `saldo` y su `origen`.
 
+### Agenda
+
+Cada pedido tiene **`fechaEntrega`**: el día para el que es (`AAAA-MM-DD`, solo el día, sin horario). El cliente lo elige en la web con estas reglas; el dueño, en cambio, **no tiene ninguna**: en el pedido manual y al cambiar la fecha (`PUT /api/pedidos/:id/fecha-entrega`) puede poner cualquier día, porque pudo arreglarlo con el cliente por fuera.
+
+**Los días que puede elegir el cliente** (`entrega` en `POST /api/carrito`; `POST /api/pedidos` revisa lo mismo):
+
+- **Desde:** hoy (en Argentina) más los días del producto del carrito que más demora: 24 hs = mañana, 48 hs = pasado. Se cuentan días, no horas: el 11/11 a las 23 hs, un producto de 24 hs ya se puede pedir para el 12/11. **Nunca hoy.**
+- **Hasta:** fin del mes actual. Si **faltan 7 días o menos** para fin de mes (desde hoy), hasta fin del mes siguiente: el 22/11 llega hasta el 30/11; el 23/11, hasta el 31/12.
+- **`diasLlenos`:** los días del rango que la web no ofrece: los que el dueño marcó como **«Agenda llena»** (`PUT /api/agenda/:fecha/cierre`) y los que **llegaron a su tope** (`productosPorDia`; ver la agenda). Pedir uno de esos es `409`. Si todos los días del rango están cerrados, se suma el mes siguiente.
+- **`diasCasiLlenos`:** los días del rango que se están llenando (nivel `medio` de la agenda: pasaron el 40 % del tope sin llegar) y que no están marcados. La web los muestra en amarillo con «Casi», pero **se pueden elegir**: solo avisan. Vacío mientras el dueño no ponga sus productos por día. Solo lo trae la cotización: el pedido no lo mira.
+
+| Hoy   | El que más demora | Puede elegir        |
+| ----- | ----------------- | ------------------- |
+| 11/11 | 24 hs             | del 12/11 al 30/11  |
+| 11/11 | 48 hs             | del 13/11 al 30/11  |
+| 22/11 | 48 hs             | del 24/11 al 30/11  |
+| 23/11 | 24 hs             | del 24/11 al 31/12  |
+| 29/11 | 48 hs             | del 1/12 al 31/12   |
+
+Errores de `POST /api/pedidos` por la fecha: `400` "La fecha de entrega tiene que ser un día AAAA-MM-DD", `400` "Para este pedido, el primer día que se puede elegir es el 12/11", `400` "Por ahora se puede pedir hasta el 30/11" y `409` "Ese día tenemos la agenda llena: elegí otro".
+
+**La agenda del dueño** (`GET /api/agenda?mes=2026-11`, privada) responde todos los días del mes:
+
+```json
+{
+  "mes": "2026-11",
+  "productosPorDia": 25,
+  "dias": [
+    { "fecha": "2026-11-01", "pedidos": 0, "productos": 0, "nivel": "bajo", "llena": false, "quiereHacer": null, "tope": false },
+    { "fecha": "2026-11-17", "pedidos": 0, "productos": 0, "nivel": "medio", "llena": false, "quiereHacer": 3, "tope": false },
+    { "fecha": "2026-11-20", "pedidos": 3, "productos": 25, "nivel": "alto", "llena": true, "quiereHacer": null, "tope": true }
+  ]
+}
+```
+
+- `productos`: la suma de las **cantidades** de los pedidos no cancelados para ese día (también los pendientes sin seña y los manuales). Un pack de 50 chipás es 1; 3 tartas son 3. Se calcula al vuelo: cancelar un pedido libera su lugar.
+- `nivel`: qué tan lleno está contra `productosPorDia` (el número que pone el dueño con `PATCH /api/ajustes`), que es **su tope**: `bajo` («Libre», verde) hasta el 40 %, `medio` («Casi», amarillo) por arriba del 40 % sin llegar, `alto` («Llena», rojo) desde el 100 %. Con 25: hasta 10 libre, de 11 a 24 casi, 25 o más llena. `null` mientras no haya `productosPorDia`.
+- `quiereHacer`: cuántos productos quiere hacer el dueño ese día, si eligió menos que los de siempre (`PUT /api/agenda/:fecha/quiere-hacer`); `null` = los de siempre. **El tope no cambia: lo que no quiere hacer se cuenta como ocupado** para el `nivel`. Con 25 y `quiereHacer: 3`, son 22 ocupados: el día arranca en `medio` («Casi», 88 %) y con 3 productos pedidos llega al tope y la web deja de ofrecerlo. Si baja poco (20 de 25), las mismas cuentas lo pueden dejar en `bajo`. `productos` sigue siendo lo pedido de verdad. Si ya tenía más pedidos que `quiereHacer`, se quedan y el día queda lleno. Sin `productosPorDia`, el tope de ese día es `quiereHacer`.
+- `faltan` (solo en `GET /api/agenda?mes=`): cuántos productos le quedan por preparar a ese día: los de sus pedidos sin entregar menos lo que el dueño anotó como hecho en «Qué hay que hacer». Es el número del circulito de la agenda; con `0`, el circulito no va.
+- `tope`: si llegó a `productosPorDia` (`nivel` `alto`). **La web deja de ofrecerlo solo**, igual que uno marcado; el dueño puede seguir cargando pedidos a mano. `llena` sigue siendo solo la marca del dueño, que puede cerrar cualquier día aunque tenga pocos productos.
+
+`GET /api/agenda/:fecha/productos` (privado): **lo que hay que preparar ese día** y cuánto ya hizo el dueño, sin importar de quién es cada pedido. Suma los productos de los pedidos que falta entregar (`pendiente` y `confirmado`; los entregados ya se hicieron y los cancelados no van). Primero lo que falta, del que más hay que hacer al que menos; al final los listos. Responde `{ "fecha", "pedidos": 3, "total": 19, "hechos": 6, "productos": [{ "productoId", "nombre", "cantidad": 17, "sinSena": 4, "hechos": 5, "faltan": 12, "listo": false }] }`: `sinSena` es cuántos de esa cantidad son de pedidos sin seña; `hechos` nunca pasa de `cantidad`.
+
+`PUT /api/agenda/:fecha/productos/:productoId` (privado) con `{ "hechos": 5 }`: anota cuántos hizo de ese producto ese día. Es **el número que queda**, no lo que suma (dos toques seguidos no se pisan); `0` lo borra. Entero de 0 a 1000. Responde la hoja entera, como el `GET`. Una fecha mal escrita o `hechos` inválido: `400`; un id mal escrito, o un producto que no está en los pedidos abiertos de ese día (con `hechos` mayor que 0): `404`.
+
+**La colección `agenda`** guarda lo que el dueño gestiona de cada día: un documento por día (`_id` = la fecha) con `llena` (lo marcó como «Agenda llena»), `hechos` (`[{ producto, cantidad }]`) y `quiereHacer` (opcional). Solo existen los días que tocó. Los pedidos del día no viven ahí: salen de los pedidos por su `fechaEntrega`; el tope tampoco: se calcula.
+- `llena`: si el dueño lo marcó. `PUT` y `DELETE` de `/api/agenda/:fecha/cierre` responden el día con esta misma forma.
+- Los pedidos de un día: `GET /api/pedidos?fechaEntrega=2026-11-20`.
+
+#### Cómo aplicar la agenda
+
+Los pedidos de antes no tienen fecha, y la web y el APK que están publicados no la mandan. Por eso, durante la transición, `fechaEntrega` es **opcional** en `POST /api/pedidos` y en el pedido manual, y los pedidos sin fecha salen con `fechaEntrega: null`. Hay que seguir este orden. ❌ No te saltees pasos: si la fecha se vuelve obligatoria antes de migrar, los pedidos viejos dejan de validar al editarlos.
+
+**1. Subir este back (no rompe nada de lo que ya anda).**
+
+- Merge de `agenda-pedidos` a `staging` y después a `master`. Render hace el deploy.
+- No hay variables de entorno nuevas.
+- La web y el APK de antes siguen andando, porque todo lo nuevo es opcional o se suma:
+  - `POST /api/pedidos` sin `fechaEntrega` sigue creando el pedido.
+  - Las respuestas suman campos: `fechaEntrega` en los pedidos, `entrega` en `POST /api/carrito` y `productosPorDia` en `GET /api/ajustes`.
+  - Si algún schema de Zod del front es estricto (`.strict()`), hay que aflojarlo antes de este paso.
+- Lo nuevo en el back:
+  - `GET /api/agenda`, `PUT`/`DELETE /api/agenda/:fecha/cierre` y `PUT /api/pedidos/:id/fecha-entrega`.
+  - `GET /api/pedidos?fechaEntrega=`.
+  - Una línea de log por petición (`middleware/registro.ts`).
+  - Los scripts `migrar-fecha-entrega` y `copiar-fotos`.
+
+**2. Publicar el front que manda la fecha (la web en Vercel y un APK nuevo para los dos admins).**
+
+- **Web:**
+  - Al cotizar el carrito, mostrar los días de `entrega` (`desde`, `hasta` y sin los `diasLlenos`).
+  - Mandar siempre `fechaEntrega` en `POST /api/pedidos`.
+  - Manejar el `400` por una fecha fuera del rango y el `409` por la agenda llena: el cliente elige otro día.
+- **App:**
+  - La agenda en el inicio, en lugar de «Lo de hoy»: `GET /api/agenda?mes=` y, para el día elegido, `GET /api/pedidos?fechaEntrega=`.
+  - El botón «Agenda llena» (`PUT`/`DELETE /api/agenda/:fecha/cierre`).
+  - `productosPorDia` en los ajustes (`PATCH /api/ajustes`).
+  - La fecha en el pedido manual y el cambio de fecha en el detalle (`PUT /api/pedidos/:id/fecha-entrega`).
+  - Mostrar `fechaEntrega: null` sin romperse (los pedidos viejos, hasta el paso 3).
+- `GET /api/resumen` sigue en el back porque lo usa el APK de antes. Se saca cuando los dos admins actualicen.
+
+**3. Ponerles fecha a los pedidos de antes, en las dos bases.** Correrlo recién cuando la web nueva ya esté publicada: si no, siguen entrando pedidos sin fecha. Solo toca los pedidos que no tienen fecha, así que se puede volver a correr.
+
+```bash
+npm run migrar-fecha-entrega                                                # base del .env (panaderia): ya se corrió el 2026-11-11
+MONGODB_URI="<la URI de Atlas con /panaderia-producion>" npm run migrar-fecha-entrega   # producción
+```
+
+La migración les pone a los pedidos de antes:
+
+- entregado → el día que se entregó;
+- confirmado → el día de la seña;
+- cancelado → el día que se hizo;
+- pendiente → el día que se hizo más 1 o 2 días, según el producto que más demora.
+
+Las fechas van en hora de Argentina. Al final lista los ids de los que siguen abiertos, por si el dueño quiere cambiarles la fecha desde la app.
+
+**4. Volver obligatoria la fecha (otro cambio en el back, recién después del 3 en las dos bases).**
+
+- `required` en `fechaEntrega` del esquema de `Pedido`.
+- `400` en `leerPedido` si no viene.
+- Que el front ya no acepte `fechaEntrega: null`.
+
 ### Estados del pedido
 
 | Estado       | Qué significa                   | Cómo se llega                                                         |
@@ -310,6 +421,7 @@ Lo que ve el dueño al abrir la app (el inicio). Es privado y se calcula al vuel
 - Si el pedido está en un estado que no permite la acción (por ejemplo, cancelar uno entregado), responde `409` con el motivo. Si dos acciones llegan a la vez, gana una y la otra recibe `409`.
 - Cada pedido trae **`origen`**: `web` (lo hizo el cliente desde la web) o `manual` (lo cargó el dueño). Los pedidos anteriores a este campo salen como `web`.
 - Cada pedido trae **`conEnvio`**: `true` si el cliente quiere que se lo manden, `false` si lo pasa a retirar. Se elige al hacer el pedido (web o manual) y el dueño lo cambia con `PUT`/`DELETE /api/pedidos/:id/envio` mientras el pedido está abierto. Los pedidos anteriores a este campo salen como `false` (antes no había envío). No cambia el total: el envío no tiene costo en el sistema.
+- Cada pedido trae **`fechaEntrega`**: el día para el que es (ver [Agenda](#agenda)). Los pedidos sin fecha (de antes, hasta correr la migración) salen como `null`.
 - Cada pedido trae **`visto`**: si el dueño ya lo vio en la app. Los de la web nacen en `false` (la app los marca como nuevos) hasta que el dueño abre el detalle y toca «Marcar como visto» (`PUT /api/pedidos/:id/visto`); los manuales nacen en `true` (los cargó él). Los pedidos anteriores a este campo salen como `true`. Las acciones (seña, entrega, cancelación) no lo cambian. `POST /api/pedidos` (público) no lo devuelve.
 
 ### Pedido manual
@@ -320,6 +432,7 @@ Lo que ve el dueño al abrir la app (el inicio). Es privado y se calcula al vuel
 {
   "cliente": { "nombre": "Doña Rosa", "telefono": "11 4444-1234" },
   "items": [{ "productoId": "...", "cantidad": 2 }],
+  "fechaEntrega": "2026-11-28",
   "nota": "Lo retira el sábado",
   "sena": { "monto": 12000 }
 }
@@ -327,6 +440,7 @@ Lo que ve el dueño al abrir la app (el inicio). Es privado y se calcula al vuel
 
 - Las mismas reglas que el pedido de la web: el cliente se crea o se actualiza por teléfono, y nombre, precio y total salen de la base.
 - **Puede incluir productos pausados** (por ejemplo, el pan dulce que le encargan fuera de temporada). Los eliminados no: `400` con `productosNoDisponibles`.
+- **La fecha es libre**: cualquier día que exista, también hoy, uno pasado o uno marcado como lleno (las reglas de la [agenda](#agenda) son solo para la web).
 - `sena` es opcional. Sin `sena`, entra `pendiente`; con seña (de 0 hasta el total; `0` = confirmado sin seña), entra `confirmado`.
 - Queda con `origen: "manual"` y sigue los mismos pasos que cualquier pedido: seña, entrega y cancelación.
 - No tiene el límite de 10 por hora del pedido público.
@@ -361,7 +475,7 @@ La carta llega resuelta del back: el front no agrupa, no filtra ni ordena.
 - Dentro de cada sección, los productos van por gusto (en el orden de la lista fija) y por nombre.
 - Los filtros son los mismos que los de `GET /api/catalogo`, con los mismos errores: `tipo` sin formato de id o `categoria` fuera de la lista dan `400`. Con `?tipo=` sale una sola sección; si no coincide nada (o el tipo no existe), `"secciones": []`.
 
-`GET /api/catalogo/filtros` responde `{ "tipos": [{ "_id", "nombre", "cantidad" }], "categorias": [{ "nombre", "cantidad" }] }`. `cantidad` son los productos activos, sin aplicar filtros. Solo salen los tipos y gustos con al menos uno. `tipos` va por nombre y `categorias` en el orden de la lista fija. `GET /api/catalogo/categorias` sigue trayendo todos los gustos, también los que están en `0`: lo usa el formulario del producto.
+`GET /api/catalogo/filtros?tipo=&categoria=` responde `{ "tipos": [{ "_id", "nombre", "cantidad" }], "categorias": [{ "nombre", "cantidad" }], "totales": { "tipos": 27, "categorias": 27 } }`. Salen siempre los tipos y gustos con al menos un producto activo (al elegir uno, los demás siguen apareciendo). `cantidad` cuenta **con el otro filtro puesto**: con `?tipo=` (Pizzas), cada gusto dice cuántas pizzas tiene, y puede ser `0`; con `?categoria=`, cada tipo cuenta solo los de ese gusto. Sin parámetros, son los productos activos de cada uno. `totales.tipos` es la opción «Todos los tipos» (los activos con el gusto elegido) y `totales.categorias`, «Todos los gustos» (los activos del tipo elegido). Un `tipo` o una `categoria` inválidos dan `400`, como en las listas. `tipos` va por nombre y `categorias` en el orden de la lista fija. `GET /api/catalogo/categorias` sigue trayendo todos los gustos, también los que están en `0`: lo usa el formulario del producto.
 
 ### Recomendaciones
 
@@ -385,12 +499,14 @@ Se guardan **dentro del producto**, de la más nueva a la más vieja, y se conse
 
 | Parámetro   | Para qué                                                                                                    |
 | ----------- | ----------------------------------------------------------------------------------------------------------- |
-| `pagina`    | Desde 1 (por defecto 1). Una página que no existe responde `productos: []`                                  |
-| `limite`    | Productos por página (por defecto 20, máx. 100)                                                             |
+| `pagina`    | Un entero desde 1 (por defecto 1). Una página que no existe responde `productos: []`. `0`, `-1` o `abc`: `400` |
+| `limite`    | Productos por página: un entero de 1 a 100 (por defecto 20). Fuera de eso (`0`, `abc`, `9999`): `400`       |
 | `buscar`    | Una parte del nombre, sin importar mayúsculas ni acentos (`sandwich` encuentra "Sándwich de miga")          |
 | `categoria` | Un gusto de la lista fija. Si no es de la lista: `400`                                                      |
 | `tipo`      | El `_id` de un [tipo](#tipos). Si no tiene formato de id: `400`                                              |
 | `estado`    | Solo en `/api/productos`: `activo` o `pausado` (si no, `400`). El catálogo siempre muestra solo los activos |
+
+`pagina` y `limite` valen igual en todas las listas paginadas (`/api/pedidos`, `/api/almacenamiento/archivos` y `/api/metricas/productos`): vacíos o sin mandar, el de por defecto; si vienen, tienen que ser enteros desde 1 (`limite` hasta 100), o la respuesta es `400` con `{ "error": "pagina tiene que ser un número entero desde 1" }` (o `"limite puede ser como mucho 100"`). Antes se corregían solos.
 
 Vienen ordenados como la lista de gustos (Dulce, Salado, …) y por nombre dentro de cada uno.
 
@@ -449,5 +565,5 @@ curl "http://localhost:3000/api/catalogo?categoria=Dulce&pagina=2"
 # Hacer un pedido (público)
 curl -X POST http://localhost:3000/api/pedidos \
   -H "Content-Type: application/json" \
-  -d '{"cliente":{"nombre":"Ana","telefono":"11 5555-1234"},"items":[{"productoId":"ID_DEL_PRODUCTO","cantidad":2}]}'
+  -d '{"cliente":{"nombre":"Ana","telefono":"11 5555-1234"},"items":[{"productoId":"ID_DEL_PRODUCTO","cantidad":2}],"fechaEntrega":"2026-11-25"}'
 ```

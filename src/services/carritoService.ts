@@ -7,6 +7,8 @@ export interface ItemCotizado {
   precio: number;
   categoria: string;
   cantidad: number;
+  /** Con cuántas horas hay que encargarlo: marca el primer día que el cliente puede elegir (agendaService) */
+  anticipacionHoras: number;
   /** La url guardada de la primera foto, si tiene */
   foto?: string;
 }
@@ -22,6 +24,7 @@ export async function cotizar(cantidades: Map<string, number>, { incluirPausados
     nombre: 1,
     precio: 1,
     categoria: 1,
+    anticipacionHoras: 1,
     imagenes: { $slice: 1 },
   });
   const porId = new Map(productos.map((producto) => [producto.id as string, producto]));
@@ -30,8 +33,8 @@ export async function cotizar(cantidades: Map<string, number>, { incluirPausados
   for (const [id, cantidad] of cantidades) {
     const producto = porId.get(id);
     if (producto) {
-      const { nombre, precio, categoria } = producto;
-      items.push({ producto: producto._id, nombre, precio, categoria, cantidad, foto: producto.imagenes[0]?.url });
+      const { nombre, precio, categoria, anticipacionHoras } = producto;
+      items.push({ producto: producto._id, nombre, precio, categoria, cantidad, anticipacionHoras, foto: producto.imagenes[0]?.url });
     }
   }
 
@@ -40,5 +43,7 @@ export async function cotizar(cantidades: Map<string, number>, { incluirPausados
     // Pausados (salvo incluirPausados), eliminados o que nunca existieron
     noDisponibles: ids.filter((id) => !porId.has(id)),
     total: Math.round(items.reduce((suma, item) => suma + item.precio * item.cantidad, 0) * 100) / 100,
+    // La del que más demora: el pedido está listo cuando lo está ese. 0 con el carrito vacío
+    anticipacionHoras: Math.max(0, ...items.map((item) => item.anticipacionHoras)),
   };
 }

@@ -222,22 +222,46 @@ export async function contarPorCategoria() {
   return CATEGORIAS.map((nombre) => ({ nombre, cantidad: cantidades.get(nombre) ?? 0 }));
 }
 
-// Las opciones de los filtros de la web: los tipos y los gustos con al menos un producto activo, con cuántos tiene
-// cada uno. Sin aplicar filtros, así al elegir uno los demás siguen apareciendo
-export async function opcionesDeFiltros() {
-  const [tipos, categorias] = await Promise.all([
-    Producto.aggregate<TipoDeSeccion & { cantidad: number }>([
-      { $match: { disponible: true, tipo: { $ne: null } } },
-      { $group: { _id: '$tipo', cantidad: { $sum: 1 } } },
-      { $lookup: { from: Tipo.collection.name, localField: '_id', foreignField: '_id', as: 'tipo' } },
-      // Un tipo que ya no existe (algún producto todavía con su id) no sale
-      { $unwind: '$tipo' },
-      { $project: { nombre: '$tipo.nombre', cantidad: 1 } },
-      { $sort: { nombre: 1, _id: 1 } },
-    ]).collation(SIN_MAYUSCULAS_NI_ACENTOS),
-    contarPorCategoria(),
+// Las opciones de los filtros de la web: los tipos y los gustos con al menos un producto activo (siempre los mismos,
+// así al elegir uno los demás siguen apareciendo). La `cantidad` de cada uno cuenta con el OTRO filtro puesto: con el
+// tipo Pizzas, cada gusto dice cuántas pizzas tiene (antes decía las de todo el catálogo y se podía elegir una
+// combinación vacía). `totales`: lo de la opción «Todos» de cada uno, también con el otro filtro
+export async function opcionesDeFiltros({ tipo, categoria }: Pick<FiltrosProductos, 'tipo' | 'categoria'> = {}) {
+  const conGusto = { disponible: true, ...(categoria && { categoria }) };
+  const conTipo = { disponible: true, ...(tipo && { tipo }) };
+  const [tiposConProductos, categoriasConProductos, tiposDelGusto, gustosDelTipo, totalTipos, totalCategorias] =
+    await Promise.all([
+      Producto.aggregate<TipoDeSeccion & { cantidad: number }>([
+        { $match: { disponible: true, tipo: { $ne: null } } },
+        { $group: { _id: '$tipo', cantidad: { $sum: 1 } } },
+        { $lookup: { from: Tipo.collection.name, localField: '_id', foreignField: '_id', as: 'tipo' } },
+        // Un tipo que ya no existe (algún producto todavía con su id) no sale
+        { $unwind: '$tipo' },
+        { $project: { nombre: '$tipo.nombre', cantidad: 1 } },
+        { $sort: { nombre: 1, _id: 1 } },
+      ]).collation(SIN_MAYUSCULAS_NI_ACENTOS),
+      contarPorCategoria(),
+      contarPor('$tipo', conGusto),
+      contarPor('$categoria', conTipo),
+      Producto.countDocuments(conGusto),
+      Producto.countDocuments(conTipo),
+    ]);
+  return {
+    tipos: tiposConProductos.map((opcion) => ({ ...opcion, cantidad: tiposDelGusto.get(String(opcion._id)) ?? 0 })),
+    categorias: categoriasConProductos
+      .filter(({ cantidad }) => cantidad > 0)
+      .map(({ nombre }) => ({ nombre, cantidad: gustosDelTipo.get(nombre) ?? 0 })),
+    totales: { tipos: totalTipos, categorias: totalCategorias },
+  };
+}
+
+// Cuántos productos que cumplen `filtro` hay por cada valor de `campo` ($tipo o $categoria)
+async function contarPor(campo: string, filtro: Record<string, unknown>) {
+  const grupos = await Producto.aggregate<{ _id: unknown; cantidad: number }>([
+    { $match: filtro },
+    { $group: { _id: campo, cantidad: { $sum: 1 } } },
   ]);
-  return { tipos, categorias: categorias.filter(({ cantidad }) => cantidad > 0) };
+  return new Map(grupos.map(({ _id, cantidad }) => [String(_id), cantidad]));
 }
 
 // El dueño ve el producto aunque esté pausado (el catálogo público no)
