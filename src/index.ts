@@ -17,6 +17,7 @@ import catalogoRoutes from './routes/catalogo';
 import clientesRoutes from './routes/clientes';
 import datosPagoRoutes from './routes/datosPago';
 import insumosRoutes from './routes/insumos';
+import logsRoutes from './routes/logs';
 import metricasRoutes from './routes/metricas';
 import pedidosRoutes from './routes/pedidos';
 import productosRoutes from './routes/productos';
@@ -81,6 +82,7 @@ app.use('/api/almacenamiento', almacenamientoRoutes);
 app.use('/api/metricas', metricasRoutes);
 app.use('/api/resumen', resumenRoutes);
 app.use('/api/agenda', agendaRoutes);
+app.use('/api/logs', logsRoutes);
 
 // Manejo de errores (incluye errores de multer, de Cloudinary, de Mongoose y del parser de JSON)
 app.use((err: Error & { status?: number; type?: string }, _req: Request, res: Response, _next: NextFunction) => {

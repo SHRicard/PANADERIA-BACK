@@ -31,3 +31,15 @@ export async function enviarCodigoRecuperacion(destino: string, codigo: string, 
     ].join('\n'),
   });
 }
+
+// Un aviso a los admins (por ahora, el de una IP sospechosa: logsService)
+export async function enviarAviso(destinos: string[], asunto: string, lineas: string[]): Promise<void> {
+  if (!transporte) throw new Error('El envío de emails no está configurado');
+
+  await transporte.sendMail({
+    from: process.env.EMAIL_FROM || usuario,
+    to: destinos.join(', '),
+    subject: asunto,
+    text: lineas.join('\n'),
+  });
+}

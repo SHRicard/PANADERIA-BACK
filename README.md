@@ -135,8 +135,28 @@ Respuesta de `POST /api/carrito`: `{ "items": [{ "productoId", "nombre", "precio
 | DELETE | `/api/agenda/:fecha/cierre`                           | Volver a abrir ese día. Desmarcarlo otra vez no es un error. Responde el día |
 | PUT    | `/api/agenda/:fecha/quiere-hacer`                     | **Un día que quiere hacer menos**: `{ "quiereHacer": 3 }` (entero de 1 a 1000). Lo que le falta para llegar a `productosPorDia` se cuenta como ocupado (ver [Agenda](#agenda)). Responde el día |
 | DELETE | `/api/agenda/:fecha/quiere-hacer`                     | Ese día vuelve a los productos de siempre. Responde el día |
+| GET    | `/api/logs`                                           | **Las peticiones a la API**, la más nueva primero, con IP, ruta, código y nivel (`exito`, `aviso`, `error`). Filtros: `?nivel=`, `?ip=`, `?sospechosos=true\|false`, `?admin=true\|false`, `?pagina=`, `?limite=` (ver [Logs](#logs)) |
+| DELETE | `/api/logs`                                           | **Borrar todos los logs** (los nombres de las IP quedan). Responde `204` |
+| GET    | `/api/logs/resumen`                                   | Totales por nivel, visitantes (IP distintas sin contar a los admins), sospechosos y los 10 apartados más usados |
+| GET    | `/api/logs/visitas`                                   | **Las visitas**: las peticiones de cada IP juntas mientras no pasen 30 minutos sin actividad (abrir la web son 3 peticiones a la vez y es 1 visita). La más reciente primero, con sus primeras 50 peticiones en orden. Filtros: `?ip=`, `?sospechosas=true\|false`, `?pagina=`, `?limite=` (ver [Logs](#logs)) |
+| GET    | `/api/logs/ips`                                       | Cada IP con lo que hizo: peticiones, niveles, sospechosos, sus 5 apartados más usados, el nombre que le puso el dueño y los clientes que hicieron un pedido desde ella (`?sospechosas=true`, `?pagina=`, `?limite=`) |
+| PUT    | `/api/logs/ips/:ip`                                   | Ponerle nombre a una IP: `{ "nombre": "Juan" }` (2 a 60). Responde `{ ip, nombre }` |
+| DELETE | `/api/logs/ips/:ip`                                   | Sacarle el nombre. Responde `204` |
+| GET    | `/api/logs/borrado-automatico`                        | `{ "diasLogs": 7 \| 15 \| 30 \| null }`: cada cuántos días se borran solos (`null` = solo a mano) |
+| PUT    | `/api/logs/borrado-automatico`                        | Cambiarlo: `{ "diasLogs": 15 }`. Vale también para los logs que ya están |
 
 Campos de producto: `nombre` (obligatorio y **único**: no puede haber dos productos con el mismo nombre, sin importar mayúsculas, acentos ni espacios de más; si se repite, `409` "Ya existe un producto con ese nombre: «…»"), `precio` (obligatorio, mayor que 0), `categoria` (obligatoria: el **gusto**, uno de la lista fija), `anticipacionHoras` (obligatoria: con cuántas horas de anticipación hay que encargarlo, entero de 0 a 720. Se muestra en el catálogo y marca el primer día que el cliente puede elegir en la web: 24 hs = mañana, 48 hs = pasado, nunca hoy; ver [Agenda](#agenda)), `descripcion`, `etiqueta` (texto libre de hasta 30 caracteres para destacarlo en el catálogo, por ejemplo "Nuevo", "Promo lanzamiento" o "El más elegido"), `ingredientes` (JSON `["harina","sal"]` o texto `harina, sal`), `pesoGramos` (mayor que 0), `tipo` (opcional: el `_id` de uno de los [tipos](#tipos)), `disponible` (`true` = activo, `false` = pausado) e `imagenes` (hasta 10 archivos por request, solo imágenes, máx. 10 MB cada uno). `descripcion`, `etiqueta`, `pesoGramos` y `tipo` son opcionales: mandarlos vacíos (`null` en JSON o `""`) los borra.
+
+### Logs
+
+Cada petición a la API **que no viene de la app del dueño** (la misma línea que sale en la terminal) se guarda en la colección `logs` con la **IP**, el método, la ruta sin query, el `apartado` (la ruta con `:id`, `:fecha`, `:ip` para agrupar), el código, el nivel, el error que se respondió y el tiempo. **Nunca** el body, la query ni los headers. No se guardan `/health`, los `OPTIONS` que salen bien, las consultas a `/api/logs` que salen bien **ni las peticiones con un token de admin válido** (la app del dueño: salen en la terminal, pero los logs son para mirar lo público). Sin token sí se guardan, también en rutas privadas (un `401` ahí es alguien de afuera probando). El campo `admin` y el filtro `?admin=` siguen en las respuestas, pero lo nuevo sale siempre en `false`.
+
+- **Nombre + IP:** de un `POST /api/pedidos` que sale bien se guarda el id del pedido; al leer, `pedido.clienteNombre` (en `/api/logs`) y `clientes` (en `/api/logs/ips`) salen del pedido. Borrar los logs no toca los pedidos.
+- **Visitas** (`/api/logs/visitas`): se calculan al leer, sin guardar nada. Una visita es una IP hasta que pasa 30 minutos sin hacer nada (`MINUTOS_ENTRE_VISITAS`). Trae `totalPeticiones` y solo las primeras 50 (`MAX_PETICIONES_POR_VISITA`), porque un ataque puede hacer miles.
+- **La IP es una pista, no una prueba:** la de un celular cambia seguido y muchos comparten la misma; un atacante usa VPN.
+- **Sospechosos** (`sospechoso`): `login-fallido`, `recuperacion-fallida`, `limite-superado` (429), `sin-autorizacion` (401 en lo privado), `ruta-inexistente` (404 de Express), `origen-no-permitido` (CORS).
+- **Aviso por email:** 10 sospechosas de una misma IP en 10 minutos → un email a los admins (con `SMTP_*`; sin SMTP, solo la línea en la terminal). Por esa IP no se vuelve a avisar en una hora, y como mucho 6 emails por hora en total.
+- **Borrado:** `DELETE /api/logs` cuando quiera el dueño, o solo con `borrado-automatico` (índice TTL de Mongo sobre `expiraEn`).
 
 ### Promos
 
