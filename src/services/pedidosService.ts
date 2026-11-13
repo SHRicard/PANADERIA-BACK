@@ -16,8 +16,8 @@ export interface DatosPedido {
   nota?: string;
   /** Si quiere que se lo manden. Si no lo dice, lo pasa a retirar */
   conEnvio: boolean;
-  /** Para qué día es (AAAA-MM-DD). Opcional solo durante la transición: la web y la app de antes no la mandan */
-  fechaEntrega?: string;
+  /** Para qué día es (AAAA-MM-DD) */
+  fechaEntrega: string;
   /** La clave del intento de la web: el mismo intento no crea dos pedidos */
   intento?: string;
 }
@@ -128,7 +128,7 @@ export async function crear(datos: DatosPedido) {
   if (await ajustesService.estaCerrado()) throw new ErrorHttp(409, NEGOCIO_CERRADO);
   const cotizacion = await carritoService.cotizar(datos.cantidades);
   if (cotizacion.noDisponibles.length > 0) return { noDisponibles: cotizacion.noDisponibles };
-  if (datos.fechaEntrega) await agendaService.revisarFechaDelCliente(datos.fechaEntrega, cotizacion.anticipacionHoras);
+  await agendaService.revisarFechaDelCliente(datos.fechaEntrega, cotizacion.anticipacionHoras);
   // Es lo que la app le marca al dueño como nuevo hasta que lo abre y toca «Marcar como visto»
   try {
     return { pedido: await guardar(datos, cotizacion, { origen: 'web', visto: false, intento: datos.intento }) };
