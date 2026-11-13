@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import express, { NextFunction, Request, Response } from 'express';
+import compression from 'compression';
 import cors from 'cors';
 import helmet from 'helmet';
 import mongoose from 'mongoose';
@@ -58,6 +59,10 @@ app.use(
     allowedHeaders: ['Content-Type', 'Authorization'],
   })
 );
+
+// Comprime (gzip) las respuestas de más de 1 KB: la carta pasa de ~51 KB a ~6 KB, que en el celular con datos se nota.
+// Antes de todas las rutas, así vale para todas; las chicas (/health, los errores) van tal cual
+app.use(compression());
 
 // Van antes del express.json() global: traen su propio parser con límite de 10kb para las rutas públicas
 app.use('/api/pedidos', pedidosRoutes);

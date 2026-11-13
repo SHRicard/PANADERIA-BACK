@@ -3,6 +3,7 @@ import { IInsumo, Insumo, UnidadInsumo } from '../models/Insumo';
 import { Producto } from '../models/Producto';
 import { IIngredienteReceta, IReceta, Receta, UnidadReceta } from '../models/Receta';
 import { ErrorHttp } from '../utils/errores';
+import { olvidarCatalogo } from './productosService';
 import { sinAcentos } from '../utils/texto';
 
 export type IngredienteNuevo =
@@ -212,6 +213,8 @@ export async function ponerPrecio(productoId: string, multiplicador: number, red
     .select(CAMPOS_PRODUCTO)
     .lean<DatosProducto>();
   if (!producto) throw new ErrorHttp(404, 'No encontrado');
+  // El precio sale en la carta
+  olvidarCatalogo();
   // Elegir el precio no es editar la receta: no le cambia updatedAt
   await Receta.updateOne(
     { producto: producto._id },
